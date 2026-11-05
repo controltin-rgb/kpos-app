@@ -1,12 +1,15 @@
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, shell } from 'electron'
-import { createAppContext } from '@main/app-context'
+import { app, BrowserWindow, dialog, screen, shell } from 'electron'
+import { createAppContext, type AppContext } from '@main/app-context'
 import { loadOrCreateSecret } from '@main/auth/secret'
 import type { Db } from '@main/db/connection'
 import { initDatabase, resolveDbPaths } from '@main/db'
 import { MigrationError } from '@main/db/migrate'
 import { thMain } from '@main/i18n/th'
 import { registerIpc } from '@main/ipc'
+import { loadOrCreateDevice } from '@main/local-device'
+import { printHtml } from '@main/print/electron-printer'
+import { EVENT_CHANNEL } from '@shared/api'
 
 const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
 
@@ -21,15 +24,18 @@ function isTrustedUrl(url: string): boolean {
   return url.startsWith('file://') && url.includes('/renderer/index.html')
 }
 
-function createMainWindow(): BrowserWindow {
+/** Main window, or a KDS / CFD window when `route` is given ('#/kds', '#/cfd'). */
+function createMainWindow(route = '', bounds?: Electron.Rectangle, fullscreen = false): BrowserWindow {
   const win = new BrowserWindow({
-    width: 1366,
-    height: 860,
+    width: bounds?.width ?? 1366,
+    height: bounds?.height ?? 860,
+    ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
+    fullscreen,
     minWidth: 1024,
     minHeight: 700,
     show: false,
     backgroundColor: '#F7F5F2',
-    title: 'KPOSS',
+    title: route === '#/cfd' ? 'KPOSS · จอลูกค้า' : route === '#/kds' ? 'KPOSS · จอบาร์' : 'KPOSS',
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -48,11 +54,30 @@ function createMainWindow(): BrowserWindow {
   })
 
   if (isDev) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL']!)
+    void win.loadURL(process.env['ELECTRON_RENDERER_URL']! + route)
   } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'))
+    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'), route ? { hash: route.slice(1) } : undefined)
   }
   return win
+}
+
+const extraWindows = new Map<'kds' | 'cfd', BrowserWindow>()
+
+/** Opens (or focuses) the KDS / CFD window. KDS shares the caller's session; CFD needs none. */
+function openSecondaryWindow(ctx: AppContext, kind: 'kds' | 'cfd', senderId: number): void {
+  const existing = extraWindows.get(kind)
+  if (existing && !existing.isDestroyed()) {
+    existing.focus()
+    return
+  }
+  // the customer display goes full screen on a second monitor when there is one
+  const displays = screen.getAllDisplays()
+  const external = displays.find((d) => d.id !== screen.getPrimaryDisplay().id)
+  const win = kind === 'cfd' && external ? createMainWindow('#/cfd', external.bounds, true) : createMainWindow(`#/${kind}`)
+  const token = ctx.sessions.get(senderId)
+  if (kind === 'kds' && token) ctx.sessions.set(win.webContents.id, token)
+  extraWindows.set(kind, win)
+  win.on('closed', () => extraWindows.delete(kind))
 }
 
 function showDbErrorAndQuit(err: unknown, dbPath: string): void {
@@ -87,8 +112,11 @@ app.whenReady().then(() => {
     return
   }
 
-  const ctx = createAppContext({
+  const ctx: AppContext = createAppContext({
     db,
+    device: loadOrCreateDevice(join(app.getPath('userData'), 'device.json')),
+    printHtml,
+    openWindow: (kind, senderId) => openSecondaryWindow(ctx, kind, senderId),
     authSecret: loadOrCreateSecret(join(app.getPath('userData'), 'secrets', 'auth.key')),
     versions: {
       app: app.getVersion(),
@@ -99,6 +127,10 @@ app.whenReady().then(() => {
     },
   })
   registerIpc(ctx, isTrustedUrl)
+  // push AppEvents (KDS updates, customer display, shift changes) to every window
+  ctx.events.on('event', (e) => {
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(EVENT_CHANNEL, e)
+  })
   createMainWindow()
 
   app.on('activate', () => {

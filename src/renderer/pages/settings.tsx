@@ -1,0 +1,170 @@
+import { useEffect, useState } from 'react'
+import type { SettingsDto } from '@shared/api-sales'
+import { BILL_RESET_POLICIES, formatBillNo, periodKey, type BillResetPolicy } from '@shared/bill-number'
+import { isValidPromptPayId } from '@shared/promptpay'
+import { Segmented } from '@renderer/components/modal'
+import { Card, Chip, Field, GradientButton, PageHeader, SelectInput, TextInput, useToast } from '@renderer/components/ui'
+import { t } from '@renderer/i18n'
+import { call, errorMessage } from '@renderer/lib/api'
+import { useNow } from '@renderer/lib/events'
+import { useSession } from '@renderer/lib/session'
+
+const st = t.settings
+type Tab = keyof typeof st.tabs
+type Draft = Pick<SettingsDto, 'vat.rate_bp' | 'bill.reset_policy' | 'promptpay.id' | 'receipt.header' | 'receipt.footer' | 'receipt.paper_mm'>
+
+/** docs/design/Settings.dc.html (draft) — sections available in phase 2. */
+export function SettingsPage() {
+  const { can } = useSession()
+  const toast = useToast()
+  const [tab, setTab] = useState<Tab>('tax')
+  const [saved, setSaved] = useState<SettingsDto | null>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [vatText, setVatText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const editable = can('settings:update')
+  const now = useNow(60_000)
+
+  useEffect(() => {
+    let alive = true
+    call('settings.get').then(
+      (s) => {
+        if (!alive) return
+        setSaved(s)
+        setDraft(s)
+        setVatText(String(s['vat.rate_bp'] / 100))
+      },
+      (err: unknown) => toast(errorMessage(err), 'error'),
+    )
+    return () => {
+      alive = false
+    }
+  }, [toast])
+
+  if (!saved || !draft) return <PageHeader icon="gear" tone="teal" title={st.title} subtitle={st.subtitle} />
+
+  const vatBp = /^\d{1,2}(\.\d{1,2})?$/.test(vatText) ? Math.round(Number(vatText) * 100) : null
+  const ppValid = draft['promptpay.id'] === '' || isValidPromptPayId(draft['promptpay.id'])
+  const example = formatBillNo(saved.branchCode, draft['bill.reset_policy'], periodKey(draft['bill.reset_policy'], now), 1)
+  const patch: Partial<Draft> = {}
+  ;(Object.keys(draft) as (keyof Draft)[]).forEach((k) => {
+    const v = k === 'vat.rate_bp' ? vatBp : draft[k]
+    if (v !== null && v !== saved[k]) (patch as Record<string, unknown>)[k] = v
+  })
+  const dirty = Object.keys(patch).length > 0
+
+  async function save() {
+    setBusy(true)
+    try {
+      const s = await call('settings.update', patch)
+      setSaved(s)
+      setDraft(s)
+      setVatText(String(s['vat.rate_bp'] / 100))
+      toast(st.saved)
+    } catch (err) {
+      toast(errorMessage(err), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft({ ...draft, [k]: v })
+
+  return (
+    <>
+      <PageHeader
+        icon="gear"
+        tone="teal"
+        title={st.title}
+        subtitle={st.subtitle}
+        actions={
+          editable && (
+            <GradientButton disabled={!dirty || busy || vatBp === null || !ppValid} onClick={() => void save()}>
+              {busy ? t.common.saving : st.save}
+            </GradientButton>
+          )
+        }
+      />
+      {!editable && <Chip bg="#FFF4D6" fg="#7A5200" className="self-start">{st.readOnly}</Chip>}
+      <div className="max-w-3xl">
+        <Segmented label={st.title} value={tab} onChange={setTab} options={(Object.keys(st.tabs) as Tab[]).map((k) => ({ value: k, label: st.tabs[k] }))} />
+      </div>
+
+      {tab === 'tax' && (
+        <div className="flex max-w-3xl flex-col gap-[18px]">
+          <Card className="relative flex flex-col gap-3 overflow-hidden">
+            <div className="absolute -top-10 -right-10 size-[140px] rounded-full bg-accent" />
+            <h2 className="relative m-0 text-lg font-bold">{st.vatTitle}</h2>
+            <div className="relative max-w-xs">
+              <Field label={st.vatRate} hint={st.vatHint} error={vatBp === null ? t.errors.INVALID_INPUT : undefined}>
+                <TextInput inputMode="decimal" value={vatText} disabled={!editable} onChange={(e) => setVatText(e.target.value.trim())} />
+              </Field>
+            </div>
+            <span className="relative rounded-xl bg-warning px-3 py-2 text-[13px] text-warning-foreground">{st.accountantNote}</span>
+          </Card>
+          <Card className="flex flex-col gap-3">
+            <h2 className="m-0 text-lg font-bold">{st.billTitle}</h2>
+            <span className="text-sm text-muted-foreground">{st.branchCode(saved.branchCode)}</span>
+            <div className="max-w-xs">
+              <Field label={st.reset}>
+                <SelectInput value={draft['bill.reset_policy']} disabled={!editable} onChange={(e) => set('bill.reset_policy', e.target.value as BillResetPolicy)}>
+                  {BILL_RESET_POLICIES.map((p) => (
+                    <option key={p} value={p}>
+                      {st.resets[p]}
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+            </div>
+            <Chip className="self-start" bg="#DDF5E8" fg="#11724A">
+              {st.example(example)}
+            </Chip>
+            <span className="text-xs text-muted-foreground">{st.resetWarn}</span>
+          </Card>
+        </div>
+      )}
+
+      {tab === 'payment' && (
+        <Card className="flex max-w-3xl flex-col gap-3">
+          <h2 className="m-0 text-lg font-bold">{st.ppTitle}</h2>
+          <Field label={st.ppId} hint={st.ppHint} error={ppValid ? undefined : t.errors.INVALID_INPUT}>
+            <TextInput inputMode="numeric" value={draft['promptpay.id']} disabled={!editable} maxLength={20} onChange={(e) => set('promptpay.id', e.target.value)} />
+          </Field>
+          <span className="rounded-xl bg-accent px-3 py-2 text-[13px] text-accent-foreground">{st.ppManual}</span>
+        </Card>
+      )}
+
+      {tab === 'printer' && (
+        <Card className="flex max-w-3xl flex-col gap-3">
+          <h2 className="m-0 text-lg font-bold">{st.printerTitle}</h2>
+          <div className="max-w-xs">
+            <Segmented
+              label={st.paper}
+              value={String(draft['receipt.paper_mm']) as '80' | '58'}
+              onChange={(v) => editable && set('receipt.paper_mm', Number(v) as 58 | 80)}
+              options={[
+                { value: '80', label: st.paperMm(80) },
+                { value: '58', label: st.paperMm(58) },
+              ]}
+            />
+          </div>
+          <Field label={st.header}>
+            <TextInput value={draft['receipt.header']} maxLength={200} disabled={!editable} onChange={(e) => set('receipt.header', e.target.value)} />
+          </Field>
+          <Field label={st.footer}>
+            <TextInput value={draft['receipt.footer']} maxLength={200} disabled={!editable} onChange={(e) => set('receipt.footer', e.target.value)} />
+          </Field>
+          <span className="text-xs text-muted-foreground">{st.printerNote}</span>
+        </Card>
+      )}
+
+      {tab === 'device' && (
+        <Card className="flex max-w-3xl flex-col gap-2">
+          <h2 className="m-0 text-lg font-bold">{st.deviceTitle}</h2>
+          <span className="text-sm">{st.deviceStandalone}</span>
+          <span className="text-sm text-muted-foreground">{st.employeeCap(saved['license.employee_cap'])}</span>
+        </Card>
+      )}
+    </>
+  )
+}

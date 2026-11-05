@@ -38,7 +38,7 @@ export function roundHalfUpDiv(numerator: number, denominator: number): number {
 }
 
 /** a × b / d, rounded half up, without intermediate overflow. */
-function mulDivHalfUp(a: number, b: number, d: number): number {
+export function mulDivHalfUp(a: number, b: number, d: number): number {
   const product = BigInt(a) * BigInt(b)
   const neg = product < 0n
   const abs = neg ? -product : product

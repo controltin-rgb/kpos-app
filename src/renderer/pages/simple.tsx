@@ -1,4 +1,5 @@
-import { Card, PageHeader } from '@renderer/components/ui'
+import { Card, OutlineButton, PageHeader, useToast } from '@renderer/components/ui'
+import { call, errorMessage } from '@renderer/lib/api'
 import type { NavLeaf } from '@renderer/components/nav'
 import { t } from '@renderer/i18n'
 import { useSession } from '@renderer/lib/session'
@@ -39,7 +40,9 @@ export function ForbiddenPage() {
 }
 
 export function SystemPage() {
-  const { system } = useSession()
+  const { system, can } = useSession()
+  const toast = useToast()
+  const open = (kind: 'kds' | 'cfd') => call('pos.openWindow', { kind }).catch((err: unknown) => toast(errorMessage(err), 'error'))
   const s = t.system
   const rows: [string, string][] = system
     ? [
@@ -64,6 +67,16 @@ export function SystemPage() {
           ))}
         </dl>
       </Card>
+      {can('pos:view') && (
+        <Card className="flex max-w-xl flex-col gap-3">
+          <strong>{t.windows.title}</strong>
+          <div className="flex flex-wrap gap-2.5">
+            <OutlineButton onClick={() => void open('cfd')}>{t.windows.openCfd}</OutlineButton>
+            <OutlineButton onClick={() => void open('kds')}>{t.windows.openKds}</OutlineButton>
+          </div>
+          <span className="text-xs text-muted-foreground">{t.windows.hint}</span>
+        </Card>
+      )}
     </>
   )
 }

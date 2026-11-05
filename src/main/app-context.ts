@@ -1,13 +1,31 @@
+import { EventEmitter } from 'node:events'
 import { toSessionUser } from '@main/auth/actor'
 import { AuthService } from '@main/auth/auth.service'
 import { createAuth } from '@main/auth/better-auth'
 import { sqliteVersion, type Db } from '@main/db/connection'
 import { createRouter, SessionRegistry, type Handlers } from '@main/ipc/router'
+import { OrgRepo } from '@main/db/repos/org.repo'
+import { renderReceipt } from '@main/print/receipt'
 import { AuditService } from '@main/services/audit.service'
+import { CatalogService } from '@main/services/catalog.service'
+import { DeviceService, type LocalDevice } from '@main/services/device.service'
+import { DocNumberService } from '@main/services/doc-number.service'
+import { InventoryService } from '@main/services/inventory.service'
+import { KdsService } from '@main/services/kds.service'
 import { RolesService } from '@main/services/roles.service'
+import { SaleService } from '@main/services/sale.service'
 import { seedSystemRoles } from '@main/services/seed'
+import { SettingsService } from '@main/services/settings.service'
 import { SetupService } from '@main/services/setup.service'
+import { ShiftService } from '@main/services/shift.service'
+import { StockService } from '@main/services/stock/stock.service'
 import { UsersService } from '@main/services/users.service'
+import { formatBillNo, periodKey } from '@shared/bill-number'
+import { AppError } from '@shared/errors'
+import { buildPromptPayPayload } from '@shared/promptpay'
+import type { AppEvent } from '@shared/api'
+import type { CfdState } from '@shared/api-sales'
+import { renderZReport } from '@main/print/z-report'
 
 export interface AppContextOptions {
   db: Db
@@ -15,7 +33,15 @@ export interface AppContextOptions {
   now?: () => number
   versions?: { app: string; electron: string; node: string; chrome: string; platform: string }
   log?: (msg: string, err: unknown) => void
+  /** this machine (persisted in userData/device.json by the Electron entry) */
+  device?: LocalDevice
+  /** prints a receipt (Electron: hidden window → OS printer); tests may capture the HTML */
+  printHtml?: (html: string, opts: { paperMm: 58 | 80 }) => Promise<void>
+  /** opens the KDS / CFD window sharing the caller's session */
+  openWindow?: (kind: 'kds' | 'cfd', senderId: number) => void
 }
+
+export type { AppEvent } from '@shared/api'
 
 /** Wires repositories, services and the IPC router. Electron-free so tests can drive it directly. */
 export function createAppContext(opts: AppContextOptions) {
@@ -30,6 +56,52 @@ export function createAppContext(opts: AppContextOptions) {
   const users = new UsersService(db, authService, audit, now)
   const roles = new RolesService(db, audit, now)
   const sessions = new SessionRegistry()
+  const events = new EventEmitter()
+  const emit = (e: AppEvent) => events.emit('event', e)
+  let lastCfd: CfdState | null = null
+
+  const device = new DeviceService(db, opts.device ?? { id: '00000000-0000-7000-8000-000000000001', name: 'POS-01', hardwareId: 'test', role: 'standalone' }, now)
+  const docs = new DocNumberService(db)
+  const settings = new SettingsService(db, audit, now)
+  const stock = new StockService(db)
+  const catalog = new CatalogService(db, audit, now)
+  const inventory = new InventoryService(db, stock, audit, now)
+  const shifts = new ShiftService(db, device, docs, audit, now)
+  const sales = new SaleService(db, catalog, stock, shifts, docs, settings, authService, audit, now)
+  const kds = new KdsService(db, now)
+  const org = new OrgRepo(db)
+  const printHtml = opts.printHtml ?? (async () => {})
+  const print = async (html: string) => {
+    try {
+      await printHtml(html, { paperMm: settings.get('receipt.paper_mm') })
+    } catch (err) {
+      throw new AppError('PRINT_FAILED', { message: String(err) })
+    }
+  }
+  const withShiftEvent = <T,>(v: T): T => (emit({ type: 'shift.changed' }), v)
+
+  const settingsDto = () => {
+    const all = settings.all()
+    const branch = org.firstBranch()
+    const code = branch ? docs.branchCode(branch.id) : 'A'
+    const policy = all['bill.reset_policy']
+    return { ...all, branchCode: code, billNoExample: formatBillNo(code, policy, periodKey(policy, now()), 1) }
+  }
+
+  async function printBill(actor: Parameters<typeof sales.get>[0], billId: string, reprint: boolean) {
+    const bill = sales.get(actor, billId)
+    const branch = org.branch(actor.branchId)
+    const html = renderReceipt(bill, {
+      shopName: branch?.company_name ?? '',
+      branchName: branch?.name ?? '',
+      header: settings.get('receipt.header'),
+      footer: settings.get('receipt.footer'),
+      paperMm: settings.get('receipt.paper_mm'),
+      vatRateBp: settings.get('vat.rate_bp'),
+      reprint,
+    })
+    await print(html)
+  }
   const v = opts.versions ?? { app: '0.0.0', electron: '', node: process.versions.node, chrome: '', platform: process.platform }
 
   const handlers: Handlers = {
@@ -85,6 +157,105 @@ export function createAppContext(opts: AppContextOptions) {
     },
 
     'audit.verify': () => audit.verifyChain(),
+
+    // ---- catalog ----------------------------------------------------------
+    'catalog.categories': (ctx) => catalog.categories(ctx.actor),
+    'catalog.saveCategory': (ctx, input) => catalog.saveCategory(ctx.actor, input),
+    'catalog.deleteCategory': (ctx, input) => (catalog.deleteCategory(ctx.actor, input.id), null),
+    'catalog.products': (ctx) => catalog.products(ctx.actor, settings.get('vat.rate_bp')),
+    'catalog.saveProduct': (ctx, input) => {
+      const p = catalog.saveProduct(ctx.actor, input)
+      return catalog.products(ctx.actor, settings.get('vat.rate_bp')).find((x) => x.id === p.id)!
+    },
+    'catalog.deleteProduct': (ctx, input) => (catalog.deleteProduct(ctx.actor, input.id), null),
+    'catalog.groups': (ctx) => catalog.groups(ctx.actor),
+    'catalog.saveGroup': (ctx, input) => catalog.saveGroup(ctx.actor, input),
+    'catalog.deleteGroup': (ctx, input) => (catalog.deleteGroup(ctx.actor, input.id), null),
+
+    // ---- inventory --------------------------------------------------------
+    'inventory.ingredients': (ctx) => inventory.ingredients(ctx.actor),
+    'inventory.saveIngredient': (ctx, input) => inventory.saveIngredient(ctx.actor, input),
+    'inventory.deleteIngredient': (ctx, input) => (inventory.deleteIngredient(ctx.actor, input.id), null),
+    'inventory.lots': (ctx, input) => inventory.lots(ctx.actor, input.ingredientId),
+    'inventory.addLot': (ctx, input) => inventory.addLot(ctx.actor, device.ensure(ctx.actor.branchId), input),
+
+    // ---- POS --------------------------------------------------------------
+    'pos.catalog': (ctx) => ({
+      ...catalog.posCatalog(ctx.actor),
+      vatRateBp: settings.get('vat.rate_bp'),
+      promptPayId: settings.get('promptpay.id'),
+      device: { id: device.local.id, name: device.local.name },
+      branchName: ctx.actor.branchName,
+    }),
+    'pos.checkout': (ctx, input) => {
+      const res = sales.checkout(ctx.actor, input)
+      emit({ type: 'bill.changed', billId: res.bill.id })
+      emit({ type: 'kds.changed' })
+      return res
+    },
+    'pos.showOnCfd': (_ctx, input) => {
+      lastCfd = input
+      emit({ type: 'cfd.state', payload: input })
+      return null
+    },
+    'cfd.state': () => lastCfd,
+    'pos.openWindow': (ctx, input) => (opts.openWindow?.(input.kind, ctx.senderId), null),
+    'pos.promptPayPayload': (_ctx, input) => {
+      const id = settings.get('promptpay.id')
+      if (!id) throw new AppError('PROMPTPAY_NOT_CONFIGURED')
+      return buildPromptPayPayload({ id, amountSatang: input.amountSatang })
+    },
+
+    // ---- bills ------------------------------------------------------------
+    'orders.list': (ctx, input) => sales.list(ctx.actor, input),
+    'orders.get': (ctx, input) => sales.get(ctx.actor, input.id),
+    'orders.void': (ctx, input) => {
+      const bill = sales.void(ctx.actor, input)
+      emit({ type: 'bill.changed', billId: bill.id })
+      emit({ type: 'kds.changed' })
+      return bill
+    },
+    'orders.refund': (ctx, input) => {
+      const bill = sales.refund(ctx.actor, input)
+      emit({ type: 'bill.changed', billId: bill.id })
+      emit({ type: 'kds.changed' })
+      return bill
+    },
+    'orders.print': async (ctx, input) => {
+      const before = sales.get(ctx.actor, input.id)
+      const printedBefore = before.events.some((e) => e.event === 'reprint')
+      sales.recordPrint(ctx.actor, input.id, device.ensure(ctx.actor.branchId))
+      await printBill(ctx.actor, input.id, printedBefore)
+      return null
+    },
+
+    // ---- shifts -----------------------------------------------------------
+    'shift.current': () => shifts.current(),
+    'shift.open': (ctx, input) => withShiftEvent(shifts.open(ctx.actor, input.openingFloatSatang)),
+    'shift.cashMove': (ctx, input) => withShiftEvent(shifts.cashMove(ctx.actor, input.kind, input.amountSatang, input.reason)),
+    'shift.close': (ctx, input) => withShiftEvent(shifts.close(ctx.actor, input.shiftId, input.counts, input.note ?? null)),
+    'shift.printZ': async (ctx, input) => {
+      const row = shifts.repo.shift(input.shiftId)
+      if (!row || row.branch_id !== ctx.actor.branchId) throw new AppError('NOT_FOUND')
+      const branch = org.branch(ctx.actor.branchId)
+      await print(renderZReport(shifts.summary(row), { shopName: branch?.company_name ?? '', branchName: branch?.name ?? '', paperMm: settings.get('receipt.paper_mm'), printedBy: ctx.actor.displayName, printedAt: now() }))
+      return null
+    },
+
+    // ---- KDS --------------------------------------------------------------
+    'kds.tickets': (ctx, input) => kds.tickets(ctx.actor, input.station),
+    'kds.advance': (ctx, input) => {
+      kds.advance(ctx.actor, input.billId, input.station)
+      emit({ type: 'kds.changed' })
+      return null
+    },
+
+    // ---- settings ---------------------------------------------------------
+    'settings.get': () => settingsDto(),
+    'settings.update': (ctx, input) => {
+      settings.update(ctx.actor, input)
+      return settingsDto()
+    },
   }
 
   const dispatch = createRouter({
@@ -95,7 +266,7 @@ export function createAppContext(opts: AppContextOptions) {
     ...(opts.log ? { log: opts.log } : {}),
   })
 
-  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch }
+  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds }
 }
 
 export type AppContext = ReturnType<typeof createAppContext>

@@ -10,7 +10,7 @@ export const ADMIN = { username: 'admin', password: 'admin-pass-1234', displayNa
 export function createTestApp() {
   const db = migratedDb()
   let t = T0
-  const app = createAppContext({ db, authSecret: 'test-secret-'.padEnd(48, 'x'), now: () => t, log: () => {} })
+  const app = createAppContext({ db, authSecret: 'test-secret-'.padEnd(48, 'x'), now: () => t, log: process.env['KPOSS_TEST_LOG'] ? (m, e) => console.error(m, e) : () => {} })
 
   const raw = (sender: number, channel: string, input?: unknown) => app.dispatch(sender, channel, input)
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { salesApi, type CfdState } from './api-sales'
 import type { Permission } from './permissions'
 
 /**
@@ -213,6 +214,8 @@ export const api = {
   'roles.delete': ep<null>()('roles:delete', z.object({ id })),
 
   'audit.verify': ep<AuditVerifyResult>()('audit:view', z.undefined()),
+
+  ...salesApi,
 } as const
 
 export type Api = typeof api
@@ -224,7 +227,19 @@ export type Output<C extends Channel> = Exclude<Api[C]['__out'], undefined>
 /** The single Electron IPC channel all calls go through. */
 export const RPC_CHANNEL = 'kposs:rpc'
 
+/** Channel used by main to push AppEvents to every window. */
+export const EVENT_CHANNEL = 'kposs:event'
+
+/** Events pushed from main to all windows (KDS / CFD / POS refresh). */
+export type AppEvent =
+  | { type: 'kds.changed' }
+  | { type: 'bill.changed'; billId: string }
+  | { type: 'shift.changed' }
+  | { type: 'cfd.state'; payload: CfdState }
+
 /** API surface exposed on window.kposs by the preload script. */
 export interface KpossBridge {
   invoke(channel: string, input: unknown): Promise<unknown>
+  /** subscribe to AppEvents; returns an unsubscribe function */
+  onEvent(listener: (event: AppEvent) => void): () => void
 }

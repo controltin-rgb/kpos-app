@@ -9,12 +9,28 @@ import { ChangePasswordPage } from './pages/change-password'
 import { LoginPage } from './pages/login'
 import { RolesPage } from './pages/roles'
 import { SetupPage } from './pages/setup'
+import { CategoriesPage, ModifiersPage } from './pages/catalog-misc'
+import { CfdPage } from './pages/cfd'
+import { InventoryPage } from './pages/inventory'
+import { OrdersPage } from './pages/orders'
+import { ProductsPage } from './pages/products'
+import { SettingsPage } from './pages/settings'
+import { KdsPage } from './pages/kds'
+import { PosPage } from './pages/pos'
+import { ShiftPage } from './pages/shift'
 import { DashboardPage, ForbiddenPage, PlaceholderPage, SystemPage } from './pages/simple'
 import { UsersPage } from './pages/users'
 
 /** Pages that exist so far; every other menu route shows a phase placeholder. */
 const PAGES: Record<string, () => ReactNode> = {
   '/': () => <DashboardPage />,
+  '/shift': () => <ShiftPage />,
+  '/orders': () => <OrdersPage />,
+  '/products': () => <ProductsPage />,
+  '/categories': () => <CategoriesPage />,
+  '/modifiers': () => <ModifiersPage />,
+  '/inventory': () => <InventoryPage />,
+  '/settings': () => <SettingsPage />,
   '/users': () => <UsersPage />,
   '/roles': () => <RolesPage />,
   '/system': () => <SystemPage />,
@@ -27,8 +43,27 @@ function Guarded({ route }: { route: NavLeaf }) {
   return <>{PAGES[route.path]?.() ?? <PlaceholderPage route={route} />}</>
 }
 
+/** Full-screen pages with their own header (no sidebar), per the confirmed prototypes. */
+const FULL_SCREEN: Record<string, { permission: NavLeaf['permission']; page: () => ReactNode }> = {
+  '/pos': { permission: 'pos:view', page: () => <PosPage /> },
+  '/kds': { permission: 'kds:view', page: () => <KdsPage /> },
+}
+
+function FullScreen({ path }: { path: string }) {
+  const { can } = useSession()
+  const def = FULL_SCREEN[path]!
+  if (def.permission && !can(def.permission))
+    return (
+      <AppShell>
+        <ForbiddenPage />
+      </AppShell>
+    )
+  return <>{def.page()}</>
+}
+
 const router = createHashRouter([
-  ...ROUTES.map((route) => ({
+  ...Object.keys(FULL_SCREEN).map((path) => ({ path, element: <FullScreen path={path} /> })),
+  ...ROUTES.filter((r) => !FULL_SCREEN[r.path]).map((route) => ({
     path: route.path,
     element: (
       <AppShell>
@@ -42,6 +77,8 @@ const router = createHashRouter([
 /** Picks the screen from the session state: setup → login → forced password change → app. */
 function Gate() {
   const { status, setup, user } = useSession()
+  // the customer display needs no login: it only shows what the POS pushes
+  if (window.location.hash.startsWith('#/cfd')) return <CfdPage />
   if (status === 'loading') return <div className="flex h-full items-center justify-center text-muted-foreground">{t.common.loading}</div>
   if (setup?.setupRequired) return <SetupPage />
   if (!user) return <LoginPage />

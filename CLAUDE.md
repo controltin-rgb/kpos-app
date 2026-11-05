@@ -65,7 +65,7 @@ npm run migrate      # รัน migration กับ DB ตัวอย่าง
 npm run lint && npm run typecheck   # typecheck ตรวจ tsconfig.node.json และ tsconfig.web.json แยกกัน
 KPOSS_USER_DATA=/tmp/x npm run dev  # (dev เท่านั้น) ใช้โฟลเดอร์ข้อมูลแยก เช่น ทดสอบหน้าตั้งค่าครั้งแรก
 ```
-- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D10 ผู้ใช้ยืนยันแล้ว, D11–D13 รอตรวจ) อ่านก่อนเริ่มงาน
+- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D10, D14–D17 ผู้ใช้ยืนยันแล้ว; D11–D13, D18 รอตรวจ) อ่านก่อนเริ่มงาน
 - IPC: ทุก endpoint ประกาศใน `src/shared/api.ts` (access + zod input) → handler ใน `src/main/app-context.ts` → service → repo; ทดสอบผ่าน `createTestApp()` ใน `tests/helpers/app.ts`
 - TypeScript ปักไว้ที่ 6.0.x เพราะ typescript-eslint ยังไม่รองรับ TS 7
 - ถ้า `npm run dev` ขึ้น error `does not provide an export named 'BrowserWindow'` แปลว่า shell มี `ELECTRON_RUN_AS_NODE=1` ค้างอยู่ ให้ `unset ELECTRON_RUN_AS_NODE`

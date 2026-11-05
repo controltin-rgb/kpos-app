@@ -6,6 +6,7 @@ import { RolesRepo } from '@main/db/repos/roles.repo'
 import { UsersRepo } from '@main/db/repos/users.repo'
 import type { ParsedInput, SetupStatus } from '@shared/api'
 import { AppError } from '@shared/errors'
+import { branchLetter } from '@shared/bill-number'
 import { uuidv7 } from '@shared/id'
 import { DEFAULT_VAT_RATE_BP } from '@shared/money'
 import type { AuditService } from './audit.service'
@@ -57,7 +58,7 @@ export class SetupService {
           const companyId = uuidv7(at)
           const branchId = uuidv7(at)
           this.org.insertCompany({ id: companyId, name: input.shopName, now: at })
-          this.org.insertBranch({ id: branchId, company_id: companyId, code: 'HQ', name: input.branchName, now: at })
+          this.org.insertBranch({ id: branchId, company_id: companyId, code: branchLetter(0), name: input.branchName, now: at })
           branch = this.org.branch(branchId)!
         }
         this.org.setSetting({ id: uuidv7(at), key: 'vat.rate_bp', branchId: null, value: DEFAULT_VAT_RATE_BP, userId: null, now: at })
