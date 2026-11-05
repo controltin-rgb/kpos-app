@@ -17,6 +17,15 @@ export const thMain = {
     } satisfies Record<MigrationErrorCode, string>,
     unknown: 'เกิดข้อผิดพลาดที่ไม่คาดคิดขณะเปิดฐานข้อมูล',
   },
+  /** Notification bell texts (docs/design/Dashboard.dc.html) */
+  notifications: {
+    lowStock: (name: string, pct: number) => `${name}เหลือ ${pct}%`,
+    lowStockBody: 'ต่ำกว่าจุดสั่งซื้อ ควรสั่งเพิ่ม',
+    nearExpiry: (name: string, days: number) => (days <= 0 ? `${name}หมดอายุวันนี้` : `${name}หมดอายุใน ${days} วัน`),
+    nearExpiryBody: 'ล็อตเก่าสุดควรใช้ก่อน',
+    pendingCount: (n: number) => `รออนุมัตินับสต็อก ${n} รายการ`,
+    pendingCountBody: 'รอผู้จัดการอนุมัติ',
+  },
   /** Default names of system roles (seed data; users may rename non-locked roles). */
   roles: {
     super_admin: { name: 'ผู้ดูแลระบบสูงสุด (Super Admin)', description: 'เข้าถึงทุกหน้าและทุก action รวมถึง License แก้ไขไม่ได้' },

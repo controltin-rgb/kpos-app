@@ -76,7 +76,10 @@ export class SalesRepo {
   bill(id: string): BillRow | undefined {
     return this.db.prepare('SELECT * FROM bills WHERE id = ?').get(id) as BillRow | undefined
   }
-  insertBill(row: Omit<BillRow, 'member_id' | 'note' | 'voided_at' | 'voided_by' | 'void_approved_by' | 'void_reason'>) {
+  insertBill(
+    row: Omit<BillRow, 'member_id' | 'note' | 'voided_at' | 'voided_by' | 'void_approved_by' | 'void_reason'> &
+      Partial<{ member_id: string | null; promotion_id: string | null; coupon_id: string | null; points_earned: number; points_redeemed: number }>,
+  ) {
     ins(this.db, 'bills', row)
   }
   updateBill(id: string, patch: Partial<Pick<BillRow, 'status' | 'voided_at' | 'voided_by' | 'void_approved_by' | 'void_reason'>>, now: number) {

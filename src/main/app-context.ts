@@ -19,6 +19,11 @@ import { SettingsService } from '@main/services/settings.service'
 import { SetupService } from '@main/services/setup.service'
 import { ShiftService } from '@main/services/shift.service'
 import { StockService } from '@main/services/stock/stock.service'
+import { StockOpsService } from '@main/services/stock-ops.service'
+import { ExpenseService } from '@main/services/expense.service'
+import { PromoService } from '@main/services/promo.service'
+import { ReportService } from '@main/services/report.service'
+import { DashboardService } from '@main/services/dashboard.service'
 import { UsersService } from '@main/services/users.service'
 import { formatBillNo, periodKey } from '@shared/bill-number'
 import { AppError } from '@shared/errors'
@@ -35,10 +40,16 @@ export interface AppContextOptions {
   log?: (msg: string, err: unknown) => void
   /** this machine (persisted in userData/device.json by the Electron entry) */
   device?: LocalDevice
-  /** prints a receipt (Electron: hidden window → OS printer); tests may capture the HTML */
-  printHtml?: (html: string, opts: { paperMm: 58 | 80 }) => Promise<void>
+  /** prints a document (Electron: hidden window → OS printer); tests may capture the HTML. 210 = A4 */
+  printHtml?: (html: string, opts: { paperMm: 58 | 80 | 210 }) => Promise<void>
+  /** OS save dialog for exports; returns the saved path or null when cancelled */
+  saveFile?: (defaultName: string, content: string) => Promise<string | null>
   /** opens the KDS / CFD window sharing the caller's session */
   openWindow?: (kind: 'kds' | 'cfd', senderId: number) => void
+  /** folder for expense receipt images (userData/receipts) */
+  receiptsDir?: string
+  /** native file picker for receipt images; returns an absolute path or null */
+  pickFile?: () => Promise<string | null>
 }
 
 export type { AppEvent } from '@shared/api'
@@ -67,13 +78,18 @@ export function createAppContext(opts: AppContextOptions) {
   const catalog = new CatalogService(db, audit, now)
   const inventory = new InventoryService(db, stock, audit, now)
   const shifts = new ShiftService(db, device, docs, audit, now)
-  const sales = new SaleService(db, catalog, stock, shifts, docs, settings, authService, audit, now)
+  const promo = new PromoService(db, settings, authService, audit, now)
+  const sales = new SaleService(db, catalog, stock, shifts, docs, settings, authService, audit, promo, now)
   const kds = new KdsService(db, now)
+  const expenses = new ExpenseService(db, shifts, docs, audit, opts.receiptsDir ?? null, now)
+  const stockOps = new StockOpsService(db, stock, catalog, shifts, docs, settings, audit, (b) => device.ensure(b), now)
   const org = new OrgRepo(db)
+  const reports = new ReportService(db, sales, shifts, stockOps, expenses, docs, settings, audit, now)
+  const dashboard = new DashboardService(db, reports, shifts, stock, now)
   const printHtml = opts.printHtml ?? (async () => {})
-  const print = async (html: string) => {
+  const print = async (html: string, a4 = false) => {
     try {
-      await printHtml(html, { paperMm: settings.get('receipt.paper_mm') })
+      await printHtml(html, { paperMm: a4 ? 210 : settings.get('receipt.paper_mm') })
     } catch (err) {
       throw new AppError('PRINT_FAILED', { message: String(err) })
     }
@@ -250,6 +266,88 @@ export function createAppContext(opts: AppContextOptions) {
       return null
     },
 
+    // ---- purchasing / counts / waste ---------------------------------------
+    'purchasing.suppliers': (ctx) => stockOps.suppliers(ctx.actor),
+    'purchasing.saveSupplier': (ctx, input) => stockOps.saveSupplier(ctx.actor, input),
+    'purchasing.orders': (ctx, input) => stockOps.orders(ctx.actor, input.status === 'open'),
+    'purchasing.saveOrder': (ctx, input) => stockOps.saveOrder(ctx.actor, input),
+    'purchasing.setStatus': (ctx, input) => stockOps.setStatus(ctx.actor, input.id, input.status),
+    'purchasing.receive': (ctx, input) => stockOps.receive(ctx.actor, input),
+    'counts.list': (ctx, input) => stockOps.counts(ctx.actor, input.status === 'open'),
+    'counts.get': (ctx, input) => stockOps.getCount(ctx.actor, input.id),
+    'counts.create': (ctx, input) => stockOps.createCount(ctx.actor, input),
+    'counts.saveLines': (ctx, input) => stockOps.saveCountLines(ctx.actor, input),
+    'counts.submit': (ctx, input) => stockOps.submitCount(ctx.actor, input.id),
+    'counts.approve': (ctx, input) => stockOps.approveCount(ctx.actor, input.id),
+    'counts.reject': (ctx, input) => stockOps.rejectCount(ctx.actor, input.id, input.reason),
+    'waste.record': (ctx, input) => stockOps.recordWaste(ctx.actor, input),
+    'waste.void': (ctx, input) => stockOps.voidWaste(ctx.actor, input.id, input.reason),
+    'waste.list': (ctx, input) => stockOps.wasteList(ctx.actor, input),
+    'waste.expiring': (ctx, input) => stockOps.expiring(ctx.actor, input.withinDays),
+    'waste.summary': (ctx, input) => stockOps.wasteSummary(ctx.actor, input.from, input.to),
+    'inventory.adjust': (ctx, input) => stockOps.adjust(ctx.actor, input),
+
+    // ---- expenses ---------------------------------------------------------
+    'expenses.categories': (ctx) => expenses.categories(ctx.actor),
+    'expenses.saveCategory': (ctx, input) => expenses.saveCategory(ctx.actor, input),
+    'expenses.list': (ctx, input) => expenses.list(ctx.actor, input),
+    'expenses.create': (ctx, input) => withShiftEvent(expenses.create(ctx.actor, input)),
+    'expenses.void': (ctx, input) => withShiftEvent(expenses.void(ctx.actor, input.id, input.reason)),
+    'expenses.summary': (ctx, input) => expenses.summary(ctx.actor, input.from, input.to),
+    'expenses.pickReceipt': async () => {
+      const file = await opts.pickFile?.()
+      return file ? expenses.storeReceipt(file) : null
+    },
+    'expenses.receipt': (ctx, input) => expenses.receiptDataUrl(ctx.actor, input.id),
+
+    // ---- dashboard / notifications -----------------------------------------
+    'dashboard.summary': (ctx, input) => dashboard.summary(ctx.actor, input.period),
+    'notifications.list': (ctx) => dashboard.notifications(ctx.actor),
+    'notifications.read': (ctx, input) => (dashboard.markRead(ctx.actor, input.id), null),
+
+    // ---- reports / tax invoices --------------------------------------------
+    'reports.sales': (ctx, input) => reports.salesReport(ctx.actor, input.from, input.to, input.bucket),
+    'reports.profit': (ctx, input) => reports.profitReport(ctx.actor, input.from, input.to),
+    'reports.zList': (ctx, input) => reports.zList(ctx.actor, input.from, input.to),
+    'reports.export': async (ctx, input) => {
+      const f = reports.exportCsv(ctx.actor, input.report, input.from, input.to)
+      return (await opts.saveFile?.(f.name, f.content)) ?? null
+    },
+    'tax.list': (ctx, input) => reports.taxList(ctx.actor, input.from, input.to, input.billId),
+    'tax.issue': (ctx, input) => {
+      const r = reports.issueTax(ctx.actor, input)
+      emit({ type: 'bill.changed', billId: r.billId })
+      return r
+    },
+    'tax.cancel': (ctx, input) => reports.cancelTax(ctx.actor, input.id, input.reason),
+    'tax.print': async (ctx, input) => {
+      const doc = reports.taxHtml(ctx.actor, input.id)
+      await print(doc.html, doc.paper === 'a4')
+      return null
+    },
+
+    'labels.print': async (_ctx, input) => {
+      await print(input.html, true)
+      return null
+    },
+
+    // ---- promotions / members ---------------------------------------------
+    'promo.list': (ctx) => promo.promotions(ctx.actor),
+    'promo.save': (ctx, input) => promo.savePromotion(ctx.actor, input),
+    'promo.delete': (ctx, input) => (promo.deletePromotion(ctx.actor, input.id), null),
+    'coupons.list': (ctx) => promo.coupons(ctx.actor),
+    'coupons.save': (ctx, input) => promo.saveCoupon(ctx.actor, input),
+    'coupons.delete': (ctx, input) => (promo.deleteCoupon(ctx.actor, input.id), null),
+    'members.tiers': (ctx) => promo.tiers(ctx.actor),
+    'members.search': (ctx, input) => promo.search(ctx.actor, input.phone),
+    'members.list': (ctx, input) => promo.list(ctx.actor, input),
+    'members.register': (ctx, input) => promo.register(ctx.actor, input),
+    'members.adjustPoints': (ctx, input) => promo.adjustPoints(ctx.actor, input.id, input.delta, input.reason),
+    'members.erase': (ctx, input) => (promo.erase(ctx.actor, input.id, input.reason), null),
+    'members.pointsRules': () => promo.pointsRules(),
+    'members.savePointsRules': (ctx, input) => promo.savePointsRules(ctx.actor, input),
+    'pos.quote': (ctx, input) => sales.quote(ctx.actor, input),
+
     // ---- settings ---------------------------------------------------------
     'settings.get': () => settingsDto(),
     'settings.update': (ctx, input) => {
@@ -266,7 +364,7 @@ export function createAppContext(opts: AppContextOptions) {
     ...(opts.log ? { log: opts.log } : {}),
   })
 
-  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds }
+  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard }
 }
 
 export type AppContext = ReturnType<typeof createAppContext>

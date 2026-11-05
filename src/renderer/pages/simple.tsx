@@ -4,19 +4,6 @@ import type { NavLeaf } from '@renderer/components/nav'
 import { t } from '@renderer/i18n'
 import { useSession } from '@renderer/lib/session'
 
-export function DashboardPage() {
-  const { user } = useSession()
-  return (
-    <>
-      <PageHeader icon="home" title={t.dashboard.title} subtitle={t.dashboard.subtitle(user?.branchName ?? '')} />
-      <Card className="relative overflow-hidden">
-        <div className="absolute -top-[34px] -right-[34px] size-[110px] rounded-full bg-[#E4EEFF]" />
-        <p className="relative m-0 text-sm text-muted-foreground">{t.dashboard.placeholder}</p>
-      </Card>
-    </>
-  )
-}
-
 export function PlaceholderPage({ route }: { route: NavLeaf }) {
   return (
     <>

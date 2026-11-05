@@ -1,4 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import type { NotificationDto } from '@shared/api-dashboard'
+import { call } from '@renderer/lib/api'
+import { useAppEvent, useNow } from '@renderer/lib/events'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { t } from '@renderer/i18n'
 import { initials } from '@renderer/lib/format'
@@ -119,6 +122,111 @@ function Sidebar({ pathname }: { pathname: string }) {
 
 type Theme = 'light' | 'auto' | 'dark'
 
+const NOTE_STYLE: Record<NotificationDto['kind'], { icon: string; g: string }> = {
+  low_stock: { icon: '!', g: '#F4616A, #DC3A44' },
+  near_expiry: { icon: '⏱', g: '#FFA43A, #F7791E' },
+  pending_count: { icon: '✓', g: '#4C8DF6, #2F6FE0' },
+}
+
+/** Notification bell from docs/design/Dashboard.dc.html (confirmed): live alerts, unread filter. */
+function Bell({ open, onToggle, onClose, popClass, arrow }: { open: boolean; onToggle: () => void; onClose: () => void; popClass: string; arrow: ReactNode }) {
+  const navigate = useNavigate()
+  const [data, setData] = useState<{ items: NotificationDto[]; unread: number }>({ items: [], unread: 0 })
+  const [filter, setFilter] = useState<'all' | 'unread'>('all')
+  const now = useNow(60_000)
+  const load = useCallback(() => call('notifications.list').then(setData, () => {}), [])
+  useEffect(() => {
+    void load()
+  }, [load, now])
+  useAppEvent((e) => {
+    if (e.type === 'bill.changed') void load()
+  })
+  const h = t.header
+  const shown = data.items.filter((n) => filter === 'all' || !n.read)
+  const readAll = async () => {
+    await call('notifications.read', { id: null })
+    void load()
+  }
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={data.unread ? h.notificationsUnread(data.unread) : h.notifications}
+        aria-expanded={open}
+        className="relative flex size-11 cursor-pointer items-center justify-center rounded-[22px] border-0 bg-white shadow-[0_1px_3px_rgba(40,30,60,0.1)]"
+      >
+        <Icon name="bell" size={20} color="#1F2430" />
+        {data.unread > 0 && (
+          <span className="absolute -top-[3px] -right-[3px] box-border flex h-5 min-w-5 items-center justify-center rounded-[10px] bg-[#E23B76] px-[5px] text-xs font-bold text-white">{data.unread}</span>
+        )}
+      </button>
+      {open && (
+        <div className={popClass} style={{ width: 380 }}>
+          {arrow}
+          <div className="relative flex items-center gap-2.5 px-1.5 pt-1 pb-0.5">
+            <span className="flex-1 text-[17px] font-bold">{h.notifications}</span>
+            <span className="rounded-xl px-3 py-[3px] text-xs font-bold" style={data.unread ? { background: '#FFE3E3', color: '#A6232B' } : { background: '#DDF5E8', color: '#11724A' }}>
+              {data.unread ? t.dash.newN(data.unread) : t.dash.allRead}
+            </span>
+          </div>
+          <div role="group" aria-label={t.dash.notifFilter} className="relative my-0.5 flex gap-1.5 rounded-[22px] bg-[#F7F5F2] p-1">
+            {(['all', 'unread'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                aria-pressed={filter === f}
+                onClick={() => setFilter(f)}
+                className="min-h-[38px] flex-1 cursor-pointer rounded-[19px] border-0 text-[13px]"
+                style={filter === f ? { background: '#FFFFFF', color: '#4B2FB8', fontWeight: 700, boxShadow: '0 1px 3px rgba(40,30,60,0.12)' } : { background: 'transparent', color: '#5C6270' }}
+              >
+                {f === 'all' ? t.dash.filterAll : t.dash.filterUnread}
+              </button>
+            ))}
+          </div>
+          <div className="relative flex max-h-[330px] flex-col gap-1.5 overflow-auto">
+            {shown.map((n) => (
+              <button
+                key={n.id}
+                type="button"
+                onClick={() => void call('notifications.read', { id: n.id }).then(load)}
+                className="flex w-full cursor-pointer items-center gap-3 rounded-2xl border-0 p-2.5 text-left"
+                style={{ background: n.read ? '#FFFFFF' : '#F5F2FE' }}
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl text-lg font-bold text-white" style={{ background: `linear-gradient(135deg, ${NOTE_STYLE[n.kind].g})` }}>
+                  {NOTE_STYLE[n.kind].icon}
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col gap-px">
+                  <span className="text-sm font-semibold text-foreground">{n.title}</span>
+                  {n.body && <span className="text-xs text-muted-foreground">{n.body}</span>}
+                  <span className="text-[11px] text-[#8C8880]">{t.dash.ago(Math.floor((now - n.createdAt) / 60_000))}</span>
+                </span>
+                <span className="size-[9px] shrink-0 rounded-full" style={{ background: n.read ? 'transparent' : '#6A47DB' }} />
+              </button>
+            ))}
+            {shown.length === 0 && <div className="px-2 py-6 text-center text-[13px] text-[#8C8880]">{h.noNotifications}</div>}
+          </div>
+          <div className="relative flex gap-2 border-t border-border pt-2">
+            <button type="button" onClick={() => void readAll()} className="min-h-11 flex-1 cursor-pointer rounded-[22px] border-0 bg-accent text-sm font-bold text-accent-foreground">
+              {h.readAll}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onClose()
+                navigate('/inventory')
+              }}
+              className="min-h-11 flex-1 cursor-pointer rounded-[22px] border-0 bg-[linear-gradient(90deg,#6A47DB,#9776F6)] text-sm font-bold text-white"
+            >
+              {h.viewAll}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Header({ onToggleNav, title }: { onToggleNav: () => void; title: string }) {
   const { user, logout } = useSession()
   const navigate = useNavigate()
@@ -183,26 +291,7 @@ function Header({ onToggleNav, title }: { onToggleNav: () => void; title: string
 
       {panel && <div className="fixed inset-0 z-20 bg-transparent" onClick={() => setPanel(null)} />}
 
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => setPanel(panel === 'bell' ? null : 'bell')}
-          aria-label={h.notifications}
-          aria-expanded={panel === 'bell'}
-          className="relative flex size-11 cursor-pointer items-center justify-center rounded-[22px] border-0 bg-white shadow-[0_1px_3px_rgba(40,30,60,0.1)]"
-        >
-          <Icon name="bell" size={20} color="#1F2430" />
-        </button>
-        {panel === 'bell' && (
-          <div className={popClass} style={popover(380)}>
-            {arrow}
-            <div className="relative flex items-center gap-2.5 px-1.5 pt-1 pb-0.5">
-              <span className="flex-1 text-[17px] font-bold">{h.notifications}</span>
-            </div>
-            <div className="p-6 text-center text-sm text-muted-foreground">{h.noNotifications}</div>
-          </div>
-        )}
-      </div>
+      <Bell open={panel === 'bell'} onToggle={() => setPanel(panel === 'bell' ? null : 'bell')} onClose={() => setPanel(null)} popClass={popClass} arrow={arrow} />
 
       <div className="relative">
         <button

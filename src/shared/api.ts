@@ -1,5 +1,10 @@
 import { z } from 'zod'
 import { salesApi, type CfdState } from './api-sales'
+import { expensesApi } from './api-expenses'
+import { promoApi } from './api-promo'
+import { reportsApi } from './api-reports'
+import { dashboardApi } from './api-dashboard'
+import { stockApi } from './api-stock'
 import type { Permission } from './permissions'
 
 /**
@@ -216,6 +221,11 @@ export const api = {
   'audit.verify': ep<AuditVerifyResult>()('audit:view', z.undefined()),
 
   ...salesApi,
+  ...stockApi,
+  ...expensesApi,
+  ...promoApi,
+  ...reportsApi,
+  ...dashboardApi,
 } as const
 
 export type Api = typeof api

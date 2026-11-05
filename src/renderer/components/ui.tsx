@@ -149,8 +149,8 @@ export function TextInput({ className, invalid, ...rest }: InputHTMLAttributes<H
   return <input className={cn(inputClass, invalid && 'border-danger-foreground', className)} aria-invalid={invalid || undefined} {...rest} />
 }
 
-export function SelectInput({ className, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn(inputClass, 'cursor-pointer', className)} {...rest} />
+export function SelectInput({ className, invalid, ...rest }: SelectHTMLAttributes<HTMLSelectElement> & { invalid?: boolean }) {
+  return <select className={cn(inputClass, 'cursor-pointer', invalid && 'border-danger-foreground', className)} aria-invalid={invalid || undefined} {...rest} />
 }
 
 export function Field({ label, error, hint, children }: { label: string; error?: string | undefined; hint?: string; children: ReactNode }) {

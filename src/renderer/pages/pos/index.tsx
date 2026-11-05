@@ -13,7 +13,9 @@ import { useAppEvent } from '@renderer/lib/events'
 import { money, vatPct } from '@renderer/lib/format'
 import { useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
+import type { PointsRulesDto, QuoteDto } from '@shared/api-promo'
 import { CashDialog, CashMoveDialog, OpenShiftDialog, PromptPayDialog, ResultDialog } from './dialogs'
+import { DiscountDialog, emptyDiscounts, MemberDialog, type DiscountState } from './discounts'
 import { ModifierSheet, type SheetResult } from './modifier-sheet'
 
 const p = t.pos
@@ -67,6 +69,12 @@ export function PosPage() {
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{ sale: SaleResult; change: number | null } | null>(null)
   const [cashMove, setCashMove] = useState(false)
+  const [disc, setDisc] = useState<DiscountState>(emptyDiscounts)
+  const [quote, setQuote] = useState<QuoteDto | null>(null)
+  const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [memberDlg, setMemberDlg] = useState(false)
+  const [discDlg, setDiscDlg] = useState(false)
+  const [pointsRules, setPointsRules] = useState<PointsRulesDto | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -114,6 +122,47 @@ export function PosPage() {
     () => computeBillTotals({ lines: cart.map((l) => ({ unitPriceSatang: l.unitPriceSatang, qty: l.qty, vatType: l.vatType })), vatRateBp }),
     [cart, vatRateBp],
   )
+  // server-side price preview (promotions, coupon, manual discount, points) — same rules as checkout
+  const discountInput = useMemo(
+    () => ({
+      memberId: disc.member?.id ?? null,
+      couponCode: disc.couponCode,
+      excludedPromotionIds: disc.excludedPromotionIds,
+      manualDiscount: disc.manual,
+      redeemPoints: disc.redeemPoints,
+    }),
+    [disc],
+  )
+  useEffect(() => {
+    if (!cart.length) return
+    let alive = true
+    const h = setTimeout(() => {
+      call('pos.quote', { items: cart.map((l) => ({ productId: l.productId, sizeId: l.sizeId, qty: l.qty, optionIds: l.optionIds })), ...discountInput }).then(
+        (q) => {
+          if (!alive) return
+          setQuote(q)
+          setQuoteError(null)
+        },
+        (err: unknown) => {
+          if (!alive) return
+          setQuote(null)
+          setQuoteError(errorMessage(err))
+        },
+      )
+    }, 150)
+    return () => {
+      alive = false
+      clearTimeout(h)
+    }
+  }, [cart, discountInput])
+  useEffect(() => {
+    if (disc.member && !pointsRules) void call('members.pointsRules').then(setPointsRules, () => {})
+  }, [disc.member, pointsRules])
+  const shown = cart.length && quote
+    ? { net: quote.netSatang, vat: quote.vatSatang, discount: quote.discountSatang, total: quote.totalSatang, vatMode: quote.vatMode }
+    : { net: totals.net, vat: totals.vat, discount: totals.discount, total: totals.total, vatMode: totals.vatMode }
+  const due = shown.total
+
   const commissionBp = orderType === 'delivery' && delivery.commissionPct ? Math.round(Number(delivery.commissionPct) * 100) : null
   const deliveryValid = orderType !== 'delivery' || (commissionBp === null || (commissionBp >= 0 && commissionBp <= 10_000))
 
@@ -171,9 +220,9 @@ export function PosPage() {
       void call('pos.showOnCfd', {
         orderLabel: t.orderTypes[orderType],
         lines: cart.map((l) => ({ qty: l.qty, name: l.name, mods: l.detail, priceSatang: l.unitPriceSatang * l.qty })),
-        discountSatang: totals.discount,
-        vatSatang: totals.vat,
-        totalSatang: totals.total,
+        discountSatang: shown.discount,
+        vatSatang: shown.vat,
+        totalSatang: shown.total,
         vatRateBp,
         promptPayPayload: pay?.kind === 'promptpay' ? pay.payload : null,
         state: result ? 'paid' : cfdState,
@@ -181,12 +230,12 @@ export function PosPage() {
       }).catch(() => {})
     }, 120)
     return () => clearTimeout(h)
-  }, [cart, totals, orderType, pay, result, cfdState, vatRateBp, can])
+  }, [cart, shown.discount, shown.vat, shown.total, orderType, pay, result, cfdState, vatRateBp, can])
 
   // ---- payment ---------------------------------------------------------------
   async function openPromptPay() {
     try {
-      const payload = await call('pos.promptPayPayload', { amountSatang: totals.total })
+      const payload = await call('pos.promptPayPayload', { amountSatang: due })
       setPay({ kind: 'promptpay', payload })
     } catch (err) {
       toast(errorMessage(err), 'error')
@@ -204,6 +253,7 @@ export function PosPage() {
         commissionBp,
         items: cart.map((l) => ({ productId: l.productId, sizeId: l.sizeId, qty: l.qty, optionIds: l.optionIds, note: l.note || null })),
         payment,
+        ...discountInput,
       })
       setPay(null)
       setResult({ sale, change })
@@ -219,6 +269,8 @@ export function PosPage() {
   function finishSale() {
     setResult(null)
     setCart([])
+    setDisc(emptyDiscounts())
+    setQuote(null)
     setRequestId(uuidv7())
     setDelivery((d) => ({ ...d, extOrderId: '' }))
     void load()
@@ -369,14 +421,27 @@ export function PosPage() {
                 onChange={(e) => setDelivery({ ...delivery, commissionPct: e.target.value.replace(/[^\d.]/g, '') })}
               />
               {commissionBp !== null && deliveryValid && (
-                <span className="col-span-2 text-[13px] text-muted-foreground">{p.deliveryNet(money(totals.total - percentOfSatang(totals.total, commissionBp)))}</span>
+                <span className="col-span-2 text-[13px] text-muted-foreground">{p.deliveryNet(money(due - percentOfSatang(due, commissionBp)))}</span>
               )}
             </div>
           )}
-          <button type="button" onClick={() => toast(p.memberSoon, 'info')} className="flex min-h-12 cursor-pointer items-center gap-2.5 rounded-[14px] border border-dashed border-[#CFC8BF] bg-[#FAF8F5] px-3.5 text-sm text-[#4A5060]">
-            <Icon name="user" />
-            {p.memberSearch}
-          </button>
+          {disc.member ? (
+            <div className="flex min-h-12 items-center gap-2.5 rounded-[14px] border border-[#9776F6] bg-[#F5F2FE] px-3.5 text-sm text-accent-foreground">
+              <Icon name="user" />
+              <span className="flex flex-1 flex-col">
+                <span className="font-semibold">{p.memberLine(disc.member.name ?? '', disc.member.phoneMasked, disc.member.tierName, disc.member.pointsBalance)}</span>
+                {quote && quote.pointsToEarn > 0 && <span className="text-xs">{p.pointsEarn(quote.pointsToEarn)}</span>}
+              </span>
+              <button type="button" aria-label={p.memberRemove} onClick={() => setDisc({ ...disc, member: null, redeemPoints: 0 })} className="size-9 cursor-pointer rounded-full border-0 bg-white text-lg">
+                ×
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setMemberDlg(true)} className="flex min-h-12 cursor-pointer items-center gap-2.5 rounded-[14px] border border-dashed border-[#CFC8BF] bg-[#FAF8F5] px-3.5 text-sm text-[#4A5060]">
+              <Icon name="user" />
+              {p.memberSearch}
+            </button>
+          )}
 
           <div className="flex min-h-[180px] flex-auto flex-col gap-2.5 overflow-y-auto">
             {empty && <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">{p.emptyCart}</div>}
@@ -403,19 +468,20 @@ export function PosPage() {
           <div className="flex flex-col gap-1.5 border-t border-border pt-3 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">{p.subtotalNet}</span>
-              <span>{money(totals.net)}</span>
+              <span>{money(shown.net)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">{totals.vatMode === 'inclusive' ? p.vatIncluded(vatPct(vatRateBp)) : p.noVat}</span>
-              <span>{money(totals.vat)}</span>
+              <span className="text-muted-foreground">{shown.vatMode === 'inclusive' ? p.vatIncluded(vatPct(vatRateBp)) : p.noVat}</span>
+              <span>{money(shown.vat)}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">{p.discount}</span>
-              <span>{money(totals.discount)}</span>
-            </div>
+            <button type="button" aria-label={p.discountOpen} disabled={empty} onClick={() => setDiscDlg(true)} className="flex cursor-pointer justify-between border-0 bg-transparent p-0 text-sm text-foreground disabled:cursor-default">
+              <span className="text-muted-foreground underline decoration-dotted underline-offset-4">{p.discount}</span>
+              <span className={shown.discount ? 'font-semibold text-success-foreground' : ''}>{shown.discount ? `−${money(shown.discount)}` : money(0)}</span>
+            </button>
+            {quoteError && <span className="rounded-xl bg-warning px-3 py-2 text-xs text-warning-foreground">{quoteError}</span>}
             <div className="mt-1 flex items-baseline justify-between">
               <span className="text-base font-bold">{p.total}</span>
-              <span className="text-[30px] font-bold text-accent-foreground">{money(totals.total)}</span>
+              <span className="text-[30px] font-bold text-accent-foreground">{money(due)}</span>
             </div>
           </div>
           {orderType === 'delivery' ? (
@@ -461,10 +527,10 @@ export function PosPage() {
           }}
         />
       )}
-      {pay?.kind === 'cash' && <CashDialog total={totals.total} busy={busy} onClose={() => setPay(null)} onPay={(tendered) => void checkout({ method: 'cash', tenderedSatang: tendered }, tendered - totals.total)} />}
+      {pay?.kind === 'cash' && <CashDialog total={due} busy={busy} onClose={() => setPay(null)} onPay={(tendered) => void checkout({ method: 'cash', tenderedSatang: tendered }, tendered - due)} />}
       {pay?.kind === 'promptpay' && (
         <PromptPayDialog
-          total={totals.total}
+          total={due}
           payload={pay.payload}
           busy={busy}
           onClose={() => setPay(null)}
@@ -474,6 +540,16 @@ export function PosPage() {
       {result && <ResultDialog result={result.sale} changeSatang={result.change} onClose={finishSale} />}
       {shift === null && <OpenShiftDialog canOpen={can('shift:create')} onOpened={() => void load()} />}
       {cashMove && <CashMoveDialog onClose={() => setCashMove(false)} onDone={() => setCashMove(false)} />}
+      {memberDlg && (
+        <MemberDialog
+          onClose={() => setMemberDlg(false)}
+          onPick={(m) => {
+            setDisc({ ...disc, member: m, redeemPoints: 0 })
+            setMemberDlg(false)
+          }}
+        />
+      )}
+      {discDlg && <DiscountDialog state={disc} quote={quote} rules={pointsRules} onChange={setDisc} onClose={() => setDiscDlg(false)} />}
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, screen, shell } from 'electron'
 import { createAppContext, type AppContext } from '@main/app-context'
@@ -116,6 +117,17 @@ app.whenReady().then(() => {
     db,
     device: loadOrCreateDevice(join(app.getPath('userData'), 'device.json')),
     printHtml,
+    receiptsDir: join(app.getPath('userData'), 'receipts'),
+    saveFile: async (defaultName, content) => {
+      const r = await dialog.showSaveDialog({ defaultPath: join(app.getPath('documents'), defaultName) })
+      if (r.canceled || !r.filePath) return null
+      await writeFile(r.filePath, content, 'utf8')
+      return r.filePath
+    },
+    pickFile: async () => {
+      const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Receipt', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
+      return r.canceled ? null : (r.filePaths[0] ?? null)
+    },
     openWindow: (kind, senderId) => openSecondaryWindow(ctx, kind, senderId),
     authSecret: loadOrCreateSecret(join(app.getPath('userData'), 'secrets', 'auth.key')),
     versions: {

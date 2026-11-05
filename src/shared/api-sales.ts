@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { Access, Endpoint } from './api'
 import { BILL_RESET_POLICIES, type BillResetPolicy } from './bill-number'
+import { type BillDiscountDto, discountInputs } from './api-promo'
 import { DENOMINATIONS_SATANG } from './cash'
 
 /** Phase 2 IPC contract: catalog, inventory, POS, shifts, orders, KDS, settings. */
@@ -202,6 +203,8 @@ export interface BillDetailDto extends BillSummaryDto {
   voidReason: string | null
   /** whether this bill can still be voided (its shift is open) */
   voidable: boolean
+  discounts: BillDiscountDto[]
+  member: { name: string | null; phoneMasked: string; pointsEarned: number; pointsRedeemed: number } | null
 }
 
 export interface SaleResult {
@@ -259,6 +262,11 @@ export interface SettingsDto {
   'receipt.footer': string
   'receipt.paper_mm': 58 | 80
   'license.employee_cap': number
+  'stock.count_separate_approver': boolean
+  'tax.seller_name': string
+  'tax.seller_tax_id': string
+  'tax.seller_branch': string
+  'tax.seller_address': string
   /** read-only info for the settings page */
   branchCode: string
   billNoExample: string
@@ -417,6 +425,7 @@ export const salesApi = {
         .min(1)
         .max(100),
       payment: paymentInput,
+      ...discountInputs,
     }),
   ),
   /** Pushes the current cart to customer-facing displays (no DB write). */
@@ -480,6 +489,11 @@ export const salesApi = {
         'receipt.header': z.string().trim().max(200),
         'receipt.footer': z.string().trim().max(200),
         'receipt.paper_mm': z.union([z.literal(58), z.literal(80)]),
+        'stock.count_separate_approver': z.boolean(),
+        'tax.seller_name': z.string().trim().max(160),
+        'tax.seller_tax_id': z.string().trim().max(20),
+        'tax.seller_branch': z.string().trim().max(5),
+        'tax.seller_address': z.string().trim().max(300),
       })
       .partial(),
   ),

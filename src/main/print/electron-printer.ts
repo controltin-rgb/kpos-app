@@ -5,7 +5,7 @@ import { BrowserWindow } from 'electron'
  * question — Implement.md §13 #6). Once a receipt printer is configured this can switch to
  * `silent: true` with `deviceName`, or to raw ESC/POS.
  */
-export async function printHtml(html: string, opts: { paperMm: 58 | 80 }): Promise<void> {
+export async function printHtml(html: string, opts: { paperMm: 58 | 80 | 210 }): Promise<void> {
   const win = new BrowserWindow({
     show: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false },
@@ -14,7 +14,9 @@ export async function printHtml(html: string, opts: { paperMm: 58 | 80 }): Promi
     await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
     await new Promise<void>((resolve, reject) => {
       win.webContents.print(
-        { silent: false, printBackground: true, margins: { marginType: 'none' }, pageSize: { width: opts.paperMm * 1000, height: 297_000 } },
+        opts.paperMm === 210
+          ? { silent: false, printBackground: true, pageSize: 'A4' }
+          : { silent: false, printBackground: true, margins: { marginType: 'none' }, pageSize: { width: opts.paperMm * 1000, height: 297_000 } },
         (success, reason) => (success || reason === 'cancelled' ? resolve() : reject(new Error(reason))),
       )
     })

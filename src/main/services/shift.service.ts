@@ -9,6 +9,9 @@ import type { AuditService } from './audit.service'
 import type { DeviceService } from './device.service'
 import type { DocNumberService } from './doc-number.service'
 
+/** Negates without producing -0. */
+const neg = (n: number) => (n === 0 ? 0 : -n)
+
 const METHODS: PaymentMethod[] = ['cash', 'promptpay', 'card', 'transfer', 'delivery', 'other']
 
 /**
@@ -176,10 +179,10 @@ export class ShiftService {
       closedByName: this.repo.userName(s.closed_by),
       openingFloatSatang: s.opening_float_satang,
       cashSalesSatang: (k['sale'] ?? 0) + (k['void_reversal'] ?? 0),
-      cashRefundsSatang: -(k['refund'] ?? 0),
+      cashRefundsSatang: neg(k['refund'] ?? 0),
       cashInSatang: k['cash_in'] ?? 0,
-      cashOutSatang: -((k['cash_out'] ?? 0) + (k['drop'] ?? 0)),
-      expensesSatang: -((k['expense'] ?? 0) + (k['expense_reversal'] ?? 0)),
+      cashOutSatang: neg((k['cash_out'] ?? 0) + (k['drop'] ?? 0)),
+      expensesSatang: neg((k['expense'] ?? 0) + (k['expense_reversal'] ?? 0)),
       expectedCashSatang: s.status === 'closed' ? s.expected_cash_satang! : this.expected(s.id),
       countedCashSatang: s.counted_cash_satang,
       overShortSatang: s.over_short_satang,

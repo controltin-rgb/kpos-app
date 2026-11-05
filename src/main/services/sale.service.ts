@@ -17,6 +17,16 @@ import type { DocNumberService } from './doc-number.service'
 import type { SettingsService } from './settings.service'
 import type { ShiftService } from './shift.service'
 import type { StockService } from './stock/stock.service'
+import { maskPhone, type PricedDiscounts, type PromoService } from './promo.service'
+import type { BillDiscountDto, QuoteDto } from '@shared/api-promo'
+import type { PromoLine } from '@shared/promotions'
+
+const toPromoLine = (l: { productId: string; categoryId: string | null; qty: number; unitPriceSatang: number }): PromoLine => ({
+  productId: l.productId,
+  categoryId: l.categoryId,
+  qty: l.qty,
+  unitPriceSatang: l.unitPriceSatang,
+})
 
 type CheckoutInput = ParsedInput<'pos.checkout'>
 
@@ -30,6 +40,7 @@ interface PricedLine {
   vatType: 'vat7' | 'vat0' | 'exempt'
   note: string | null
   kdsStation: string | null
+  categoryId: string | null
   modifiers: { optionId: string; groupName: string; optionName: string; priceSatang: number; highlight: boolean }[]
   requirementPerUnit: { ingredientId: string; qtyMilli: number }[]
 }
@@ -52,6 +63,7 @@ export class SaleService {
     private readonly settings: SettingsService,
     private readonly authService: AuthService,
     private readonly audit: AuditService,
+    private readonly promo: PromoService,
     private readonly now: () => number = Date.now,
   ) {
     this.repo = new SalesRepo(db)
@@ -74,7 +86,11 @@ export class SaleService {
 
     const vatRateBp = this.settings.get('vat.rate_bp')
     const lines = input.items.map((i) => this.price(actor.branchId, i))
-    const totals = computeBillTotals({ lines: lines.map((l) => ({ unitPriceSatang: l.unitPriceSatang, qty: l.qty, vatType: l.vatType })), vatRateBp })
+    // discounts first (may verify an approver PIN, so outside the write transaction)
+    const priced = this.promo.price(actor, lines.map(toPromoLine), input, { verifyApprover: true })
+    if (input.couponCode && priced.couponError) throw new AppError('COUPON_INVALID', { reason: priced.couponError })
+    const totals = computeBillTotals({ lines: lines.map((l) => ({ unitPriceSatang: l.unitPriceSatang, qty: l.qty, vatType: l.vatType })), billDiscountSatang: priced.discountSatang, vatRateBp })
+    const pointsEarned = priced.member ? this.promo.pointsFor(totals.total, priced.tierMultMilli) : 0
 
     if (totals.total <= 0) throw new AppError('PAYMENT_INVALID', { reason: 'zero_total' })
     const pay = input.payment
@@ -114,11 +130,25 @@ export class SaleService {
         total_satang: totals.total,
         commission_bp: input.commissionBp,
         commission_satang: commissionSatang,
+        member_id: priced.member?.id ?? null,
+        promotion_id: priced.promotions[0]?.promotionId ?? null,
+        coupon_id: priced.couponId,
+        points_earned: pointsEarned,
+        points_redeemed: priced.points.redeemed,
         created_by: actor.userId,
         created_at: at,
         paid_at: at,
         updated_at: at,
       })
+      this.recordDiscounts(actor, billId, billNo, priced, at)
+      if (priced.member) {
+        if (priced.points.redeemed) {
+          const balance = this.db.prepare('SELECT points_balance FROM members WHERE id = ?').pluck().get(priced.member.id) as number
+          if (balance < priced.points.redeemed) throw new AppError('POINTS_INSUFFICIENT', { balance })
+          this.promo.addPoints(priced.member.id, -priced.points.redeemed, 'redeem', 'bill', billId, null, actor.userId, at, false)
+        }
+        if (pointsEarned) this.promo.addPoints(priced.member.id, pointsEarned, 'earn', 'bill', billId, null, actor.userId, at, true)
+      }
 
       const stockCtx = { branchId: actor.branchId, userId: actor.userId, deviceId, at }
       lines.forEach((l, idx) => {
@@ -206,6 +236,54 @@ export class SaleService {
     return { bill: this.detail(billId), shortages }
   }
 
+  /** Price preview for the POS (no approver PIN check, nothing written). */
+  quote(actor: Actor, input: ParsedInput<'pos.quote'>): QuoteDto {
+    const vatRateBp = this.settings.get('vat.rate_bp')
+    const lines = input.items.map((i) => this.price(actor.branchId, { ...i, note: null }))
+    const p = this.promo.price(actor, lines.map(toPromoLine), input, { verifyApprover: false })
+    const totals = computeBillTotals({ lines: lines.map((l) => ({ unitPriceSatang: l.unitPriceSatang, qty: l.qty, vatType: l.vatType })), billDiscountSatang: p.discountSatang, vatRateBp })
+    return {
+      subtotalSatang: totals.subtotal,
+      promotions: p.promotions.map(({ couponId: _c, ...a }) => a),
+      couponError: input.couponCode ? p.couponError : null,
+      manualDiscountSatang: p.manual?.amount ?? 0,
+      pointsDiscountSatang: p.points.amount,
+      pointsRedeemed: p.points.redeemed,
+      discountSatang: totals.discount,
+      totalSatang: totals.total,
+      vatSatang: totals.vat,
+      netSatang: totals.net,
+      vatMode: totals.vatMode,
+      member: p.member ? this.promo.memberDto(actor, p.member) : null,
+      pointsToEarn: p.member ? this.promo.pointsFor(totals.total, p.tierMultMilli) : 0,
+    }
+  }
+
+  /** One bill_discounts row per discount; the manual one is audited (CLAUDE.md rule 4). */
+  private recordDiscounts(actor: Actor, billId: string, billNo: string, p: PricedDiscounts, at: number) {
+    const ins = this.db.prepare(
+      `INSERT INTO bill_discounts (id, bill_id, kind, promotion_id, coupon_id, description, amount_satang, points, approved_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    for (const a of p.promotions) ins.run(uuidv7(at), billId, a.couponId ? 'coupon' : 'promotion', a.promotionId, a.couponId, a.name, a.discountSatang, null, null, at)
+    if (p.couponId) this.promo.useCoupon(p.couponId, at)
+    if (p.manual) {
+      ins.run(uuidv7(at), billId, 'manual', null, null, p.manual.description, p.manual.amount, null, p.manual.approvedBy, at)
+      this.audit.append({
+        action: 'bill.discount',
+        permission: 'pos:discount',
+        userId: actor.userId,
+        branchId: actor.branchId,
+        entity: 'bills',
+        entityId: billId,
+        after: { billNo, amountSatang: p.manual.amount, subtotalSatang: p.subtotal, approvedBy: p.manual.approvedBy },
+        reason: p.manual.description,
+        risk: p.manual.approvedBy ? 'high' : 'medium',
+      })
+    }
+    if (p.points.redeemed) ins.run(uuidv7(at), billId, 'points', null, null, `แลก ${p.points.redeemed} แต้ม`, p.points.amount, p.points.redeemed, null, at)
+  }
+
   /** Prices one cart line from the DB and computes its per-unit BOM. */
   private price(branchId: string, item: CheckoutInput['items'][number]): PricedLine {
     const p = this.catalog.saleable(branchId, item.productId)
@@ -241,6 +319,7 @@ export class SaleService {
       vatType: p.product.vat_type,
       note: item.note ?? null,
       kdsStation: p.product.kind === 'retail' ? null : (category?.kds_station ?? 'bar'),
+      categoryId: p.product.category_id,
       modifiers,
       requirementPerUnit: requirementPerUnit(p.recipe, { id: size.id, multiplierMilli: size.multiplierMilli }, modBoms),
     }
@@ -328,6 +407,14 @@ export class SaleService {
         })
       }
     }
+
+    // points and coupon usage go back too
+    const pointRows = this.db
+      .prepare(`SELECT * FROM point_ledger l WHERE ref_type = 'bill' AND ref_id = ? AND reverses_id IS NULL AND NOT EXISTS (SELECT 1 FROM point_ledger r WHERE r.reverses_id = l.id)`)
+      .all(bill.id) as { id: string; member_id: string; delta: number; reason: string }[]
+    for (const r of pointRows) this.promo.addPoints(r.member_id, -r.delta, 'void_reversal', 'bill', bill.id, r.id, actor.userId, at, r.reason === 'earn')
+    const couponId = this.db.prepare('SELECT coupon_id FROM bills WHERE id = ?').pluck().get(bill.id) as string | null
+    if (couponId) this.promo.releaseCoupon(couponId, at)
 
     this.stock.reverse(
       { branchId: bill.branch_id, userId: actor.userId, deviceId, at },
@@ -441,6 +528,11 @@ export class SaleService {
       events: this.repo.events(id).map((e) => ({ event: e.event, at: e.created_at, userName: e.user_name, approverName: e.approver_name, reason: e.reason })),
       voidReason: b.void_reason,
       voidable: b.status === 'paid' && b.shift_status === 'open',
+      discounts: this.db.prepare('SELECT kind, description, amount_satang FROM bill_discounts WHERE bill_id = ? ORDER BY rowid').all(id).map((r) => {
+        const d = r as { kind: BillDiscountDto['kind']; description: string; amount_satang: number }
+        return { kind: d.kind, description: d.description, amountSatang: d.amount_satang }
+      }),
+      member: this.memberOf(b),
     }
   }
 
@@ -452,6 +544,13 @@ export class SaleService {
       this.repo.insertEvent({ id: uuidv7(at), bill_id: bill.id, event: 'reprint', user_id: actor.userId, approved_by: null, reason: null, data_json: '{}', device_id: deviceId, created_at: at })
     }).immediate()
     return this.detail(id)
+  }
+
+  private memberOf(b: BillRow): BillDetailDto['member'] {
+    if (!b.member_id) return null
+    const m = this.db.prepare('SELECT phone, name, deleted_at FROM members WHERE id = ?').get(b.member_id) as { phone: string; name: string | null; deleted_at: number | null } | undefined
+    const pts = this.db.prepare('SELECT points_earned, points_redeemed FROM bills WHERE id = ?').get(b.id) as { points_earned: number; points_redeemed: number }
+    return { name: m?.deleted_at ? null : (m?.name ?? null), phoneMasked: m && !m.deleted_at ? maskPhone(m.phone) : '—', pointsEarned: pts.points_earned, pointsRedeemed: pts.points_redeemed }
   }
 
   private mustFind(actor: Actor, id: string): BillRow {

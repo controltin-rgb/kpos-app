@@ -131,6 +131,18 @@ export const ICONS = {
     </>
   ),
   scan: <path d="M4 7V5a1 1 0 0 1 1-1h2M20 7V5a1 1 0 0 0-1-1h-2M4 17v2a1 1 0 0 0 1 1h2M20 17v2a1 1 0 0 1-1 1h-2M8 8v8M12 8v8M16 8v8" />,
+  baht: <path d="M12 3v18M16 7H10a3 3 0 0 0 0 6h4a3 3 0 0 1 0 6H8" />,
+  trend: <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />,
+  warning: <path d="M12 9v4M12 17v.5M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />,
+  truck: (
+    <>
+      <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7" />
+      <circle cx="7" cy="18" r="1.6" />
+      <circle cx="17" cy="18" r="1.6" />
+    </>
+  ),
+  pie: <path d="M21 12A9 9 0 1 1 12 3v9z" />,
+  refresh: <path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
   chevronLeft: <path d="M15 6l-6 6 6 6" />,
   chevronRight: <path d="M9 6l6 6-6 6" />,

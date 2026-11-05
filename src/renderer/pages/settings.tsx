@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import type { SettingsDto } from '@shared/api-sales'
 import { BILL_RESET_POLICIES, formatBillNo, periodKey, type BillResetPolicy } from '@shared/bill-number'
 import { isValidPromptPayId } from '@shared/promptpay'
+import { isValidBranchNo, isValidThaiTaxId } from '@shared/tax-id'
 import { Segmented } from '@renderer/components/modal'
-import { Card, Chip, Field, GradientButton, PageHeader, SelectInput, TextInput, useToast } from '@renderer/components/ui'
+import { Card, Chip, Field, GradientButton, PageHeader, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useNow } from '@renderer/lib/events'
@@ -11,7 +12,21 @@ import { useSession } from '@renderer/lib/session'
 
 const st = t.settings
 type Tab = keyof typeof st.tabs
-type Draft = Pick<SettingsDto, 'vat.rate_bp' | 'bill.reset_policy' | 'promptpay.id' | 'receipt.header' | 'receipt.footer' | 'receipt.paper_mm'>
+type Draft = Pick<
+  SettingsDto,
+  | 'vat.rate_bp'
+  | 'bill.reset_policy'
+  | 'promptpay.id'
+  | 'receipt.header'
+  | 'receipt.footer'
+  | 'receipt.paper_mm'
+  | 'stock.count_separate_approver'
+  | 'tax.seller_name'
+  | 'tax.seller_tax_id'
+  | 'tax.seller_branch'
+  | 'tax.seller_address'
+>
+const DRAFT_KEYS: (keyof Draft)[] = ['vat.rate_bp', 'bill.reset_policy', 'promptpay.id', 'receipt.header', 'receipt.footer', 'receipt.paper_mm', 'stock.count_separate_approver', 'tax.seller_name', 'tax.seller_tax_id', 'tax.seller_branch', 'tax.seller_address']
 
 /** docs/design/Settings.dc.html (draft) — sections available in phase 2. */
 export function SettingsPage() {
@@ -47,11 +62,13 @@ export function SettingsPage() {
   const ppValid = draft['promptpay.id'] === '' || isValidPromptPayId(draft['promptpay.id'])
   const example = formatBillNo(saved.branchCode, draft['bill.reset_policy'], periodKey(draft['bill.reset_policy'], now), 1)
   const patch: Partial<Draft> = {}
-  ;(Object.keys(draft) as (keyof Draft)[]).forEach((k) => {
+  DRAFT_KEYS.forEach((k) => {
     const v = k === 'vat.rate_bp' ? vatBp : draft[k]
     if (v !== null && v !== saved[k]) (patch as Record<string, unknown>)[k] = v
   })
   const dirty = Object.keys(patch).length > 0
+  const taxIdOk = draft['tax.seller_tax_id'] === '' || isValidThaiTaxId(draft['tax.seller_tax_id'])
+  const branchOk = isValidBranchNo(draft['tax.seller_branch'])
 
   async function save() {
     setBusy(true)
@@ -79,7 +96,7 @@ export function SettingsPage() {
         subtitle={st.subtitle}
         actions={
           editable && (
-            <GradientButton disabled={!dirty || busy || vatBp === null || !ppValid} onClick={() => void save()}>
+            <GradientButton disabled={!dirty || busy || vatBp === null || !ppValid || !taxIdOk || !branchOk} onClick={() => void save()}>
               {busy ? t.common.saving : st.save}
             </GradientButton>
           )
@@ -121,6 +138,24 @@ export function SettingsPage() {
             </Chip>
             <span className="text-xs text-muted-foreground">{st.resetWarn}</span>
           </Card>
+          <Card className="flex flex-col gap-3">
+            <h2 className="m-0 text-lg font-bold">{st.sellerTitle}</h2>
+            <Field label={st.sellerName}>
+              <TextInput value={draft['tax.seller_name']} maxLength={160} disabled={!editable} onChange={(e) => set('tax.seller_name', e.target.value)} />
+            </Field>
+            <div className="grid grid-cols-[2fr_1fr] gap-3">
+              <Field label={st.sellerTaxId} error={taxIdOk ? undefined : st.taxIdInvalid}>
+                <TextInput inputMode="numeric" invalid={!taxIdOk} value={draft['tax.seller_tax_id']} maxLength={17} disabled={!editable} onChange={(e) => set('tax.seller_tax_id', e.target.value.replace(/\D/g, ''))} />
+              </Field>
+              <Field label={st.sellerBranch} error={branchOk ? undefined : st.branchInvalid}>
+                <TextInput inputMode="numeric" invalid={!branchOk} value={draft['tax.seller_branch']} maxLength={5} disabled={!editable} onChange={(e) => set('tax.seller_branch', e.target.value.replace(/\D/g, ''))} />
+              </Field>
+            </div>
+            <Field label={st.sellerAddress} hint={st.sellerHint}>
+              <TextInput value={draft['tax.seller_address']} maxLength={300} disabled={!editable} onChange={(e) => set('tax.seller_address', e.target.value)} />
+            </Field>
+            <span className="rounded-xl bg-warning px-3 py-2 text-[13px] text-warning-foreground">{st.accountantNote}</span>
+          </Card>
         </div>
       )}
 
@@ -155,6 +190,19 @@ export function SettingsPage() {
             <TextInput value={draft['receipt.footer']} maxLength={200} disabled={!editable} onChange={(e) => set('receipt.footer', e.target.value)} />
           </Field>
           <span className="text-xs text-muted-foreground">{st.printerNote}</span>
+        </Card>
+      )}
+
+      {tab === 'stock' && (
+        <Card className="flex max-w-3xl flex-col gap-3">
+          <h2 className="m-0 text-lg font-bold">{st.stockTitle}</h2>
+          <div className="flex min-h-12 items-center justify-between gap-3">
+            <span className="flex flex-col text-[15px]">
+              {st.separateApprover}
+              <span className="text-xs text-muted-foreground">{st.separateApproverHint}</span>
+            </span>
+            <Toggle checked={draft['stock.count_separate_approver']} label={st.separateApprover} disabled={!editable} onChange={(v) => set('stock.count_separate_approver', v)} />
+          </div>
         </Card>
       )}
 

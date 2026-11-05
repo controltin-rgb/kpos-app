@@ -18,7 +18,14 @@ import { SettingsPage } from './pages/settings'
 import { KdsPage } from './pages/kds'
 import { PosPage } from './pages/pos'
 import { ShiftPage } from './pages/shift'
-import { DashboardPage, ForbiddenPage, PlaceholderPage, SystemPage } from './pages/simple'
+import { DashboardPage } from './pages/dashboard'
+import { ExpensesPage } from './pages/expenses'
+import { LabelPage } from './pages/label'
+import { CouponsPage, PromoPage } from './pages/promo'
+import { ReceivingPage } from './pages/receiving'
+import { DeliveryCommissionPage, ReportsPage, ZReportPage } from './pages/reports'
+import { WastePage } from './pages/waste'
+import { ForbiddenPage, PlaceholderPage, SystemPage } from './pages/simple'
 import { UsersPage } from './pages/users'
 
 /** Pages that exist so far; every other menu route shows a phase placeholder. */
@@ -30,6 +37,16 @@ const PAGES: Record<string, () => ReactNode> = {
   '/categories': () => <CategoriesPage />,
   '/modifiers': () => <ModifiersPage />,
   '/inventory': () => <InventoryPage />,
+  '/receiving': () => <ReceivingPage />,
+  '/stock-count': () => <ReceivingPage />,
+  '/waste': () => <WastePage />,
+  '/expenses': () => <ExpensesPage />,
+  '/promo': () => <PromoPage />,
+  '/coupons': () => <CouponsPage />,
+  '/reports': () => <ReportsPage />,
+  '/z-report': () => <ZReportPage />,
+  '/delivery-commission': () => <DeliveryCommissionPage />,
+  '/label': () => <LabelPage />,
   '/settings': () => <SettingsPage />,
   '/users': () => <UsersPage />,
   '/roles': () => <RolesPage />,

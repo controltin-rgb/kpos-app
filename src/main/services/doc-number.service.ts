@@ -45,6 +45,15 @@ export class DocNumberService {
     return formatBillNo(prefix, policy, period, seq)
   }
 
+  /** D19/D20: tax invoices numbered per type with a yearly reset: A-TX-69-000001 / A-TA-69-000001. */
+  nextTaxNo(branchId: string, type: 'full' | 'abbreviated', now: number): string {
+    const prefix = this.branchCode(branchId)
+    const yy = periodKey('yearly', now)
+    const code = type === 'full' ? 'TX' : 'TA'
+    const seq = this.next(branchId, `tax:${code}:${yy}`, now, prefix)
+    return `${prefix}-${code}-${yy}-${String(seq).padStart(6, '0')}`
+  }
+
   /** Other documents: <branch>-<TYPE>-000001 (shift S, waste W, …). */
   nextDocNo(branchId: string, type: string, now: number): string {
     const prefix = this.branchCode(branchId)

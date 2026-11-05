@@ -22,6 +22,7 @@ export interface LotRow {
   ingredient_id: string
   lot_no: string | null
   receipt_id: string | null
+  po_line_id: string | null
   source: 'receive' | 'count_adjust' | 'opening'
   qty_received_milli: number
   qty_remaining_milli: number
@@ -129,15 +130,15 @@ export class StockRepo {
       .all(ingredientId) as LotRow[]
   }
 
-  insertLot(row: Omit<LotRow, 'receipt_id'> & { receipt_id?: string | null }): void {
+  insertLot(row: Omit<LotRow, 'receipt_id' | 'po_line_id'> & { receipt_id?: string | null; po_line_id?: string | null }): void {
     this.db
       .prepare(
-        `INSERT INTO stock_lots (id, branch_id, ingredient_id, lot_no, receipt_id, source, qty_received_milli,
+        `INSERT INTO stock_lots (id, branch_id, ingredient_id, lot_no, receipt_id, po_line_id, source, qty_received_milli,
            qty_remaining_milli, total_cost_satang, received_at, expires_at, created_at, updated_at)
-         VALUES (@id, @branch_id, @ingredient_id, @lot_no, @receipt_id, @source, @qty_received_milli,
+         VALUES (@id, @branch_id, @ingredient_id, @lot_no, @receipt_id, @po_line_id, @source, @qty_received_milli,
            @qty_remaining_milli, @total_cost_satang, @received_at, @expires_at, @created_at, @updated_at)`,
       )
-      .run({ receipt_id: null, ...row })
+      .run({ receipt_id: null, po_line_id: null, ...row })
   }
 
   /** Adds (positive) or removes (negative) quantity; the CHECK constraint rejects going below zero. */
@@ -161,16 +162,16 @@ export class StockRepo {
   }
 
   /** 'sale' rows for the given refs that have not been reversed yet. */
-  unreversedSales(refType: string, refIds: readonly string[]): LedgerRow[] {
+  unreversedSales(refType: string, refIds: readonly string[], reason: 'sale' | 'waste' = 'sale'): LedgerRow[] {
     if (!refIds.length) return []
     return this.db
       .prepare(
         `SELECT l.* FROM stock_ledger l
-         WHERE l.reason = 'sale' AND l.ref_type = ? AND l.ref_id IN (SELECT value FROM json_each(?))
+         WHERE l.reason = ? AND l.ref_type = ? AND l.ref_id IN (SELECT value FROM json_each(?))
            AND NOT EXISTS (SELECT 1 FROM stock_ledger r WHERE r.reverses_id = l.id)
          ORDER BY l.created_at, l.id`,
       )
-      .all(refType, JSON.stringify(refIds)) as LedgerRow[]
+      .all(reason, refType, JSON.stringify(refIds)) as LedgerRow[]
   }
 
   ledgerFor(refType: string, refIds: readonly string[]): LedgerRow[] {

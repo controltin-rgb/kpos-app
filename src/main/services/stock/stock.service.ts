@@ -2,7 +2,19 @@ import type { Db } from '@main/db/connection'
 import { StockRepo, type LotRow } from '@main/db/repos/stock.repo'
 import type { Requirement } from '@shared/bom'
 import { uuidv7 } from '@shared/id'
+import { AppError } from '@shared/errors'
 import { allocateFromLots } from './allocate'
+
+export interface DeductOptions {
+  /** ledger reason (default 'sale') */
+  reason?: 'sale' | 'waste' | 'count_adjust' | 'adjust'
+  /** false → throw STOCK_INSUFFICIENT instead of recording a shortage */
+  allowShortage?: boolean
+  /** take only from this lot (e.g. writing off a near-expiry lot) */
+  lotId?: string | null
+}
+
+export type DeductResult = ShortageNotice[] & { costSatang: number }
 
 export interface StockContext {
   branchId: string
@@ -47,14 +59,18 @@ export class StockService {
    * Deducts `requirements` for one document line (e.g. a bill item), FEFO/FIFO per ingredient.
    * What the lots cannot cover is recorded as a shortage (D16) and returned so the UI can warn.
    */
-  deduct(ctx: StockContext, refType: string, refId: string, requirements: readonly Requirement[]): ShortageNotice[] {
+  deduct(ctx: StockContext, refType: string, refId: string, requirements: readonly Requirement[], opts: DeductOptions = {}): DeductResult {
     this.assertTx()
+    const reason = opts.reason ?? 'sale'
     const notices: ShortageNotice[] = []
+    let costSatang = 0
     for (const req of requirements) {
       const ing = this.repo.ingredient(req.ingredientId)
       if (!ing) throw new Error(`ingredient ${req.ingredientId} not found`)
-      const lots = this.repo.availableLots(ing.id)
+      let lots = this.repo.availableLots(ing.id)
+      if (opts.lotId) lots = lots.filter((l) => l.id === opts.lotId)
       const { takes, shortageMilli } = allocateFromLots(lots.map(toAlloc), req.qtyMilli, ing.has_expiry === 1)
+      if (shortageMilli > 0 && opts.allowShortage === false) throw new AppError('STOCK_INSUFFICIENT', { ingredientId: ing.id, shortMilli: shortageMilli })
       for (const t of takes) {
         this.repo.moveLot(t.lotId, -t.qtyMilli, ctx.at)
         this.repo.insertLedger({
@@ -64,7 +80,7 @@ export class StockService {
           lot_id: t.lotId,
           delta_qty_milli: -t.qtyMilli,
           cost_satang: -t.costSatang,
-          reason: 'sale',
+          reason,
           ref_type: refType,
           ref_id: refId,
           reverses_id: null,
@@ -72,6 +88,7 @@ export class StockService {
           device_id: ctx.deviceId,
           created_at: ctx.at,
         })
+        costSatang += t.costSatang
       }
       if (shortageMilli > 0) {
         this.repo.insertShortage({
@@ -88,7 +105,7 @@ export class StockService {
         notices.push({ ingredientId: ing.id, ingredientName: ing.name, baseUnit: ing.base_unit, qtyMilli: shortageMilli })
       }
     }
-    return notices
+    return Object.assign(notices, { costSatang })
   }
 
   /**
@@ -99,8 +116,9 @@ export class StockService {
   reverse(ctx: StockContext, refType: string, refIds: readonly string[], reason: 'void_reversal' | 'refund_reversal' | 'waste_reversal'): void {
     this.assertTx()
     const shortages = this.repo.shortagesFor(refType, refIds)
+    const original = reason === 'waste_reversal' ? 'waste' : 'sale'
     const rows = [
-      ...this.repo.unreversedSales(refType, refIds),
+      ...this.repo.unreversedSales(refType, refIds, original),
       ...this.repo.unreversedSales('stock_shortage', shortages.map((s) => s.id)),
     ]
     for (const row of rows) {
@@ -129,7 +147,21 @@ export class StockService {
   /** Adds a lot (receiving without PO / opening stock) and settles open shortages from stock (D16). */
   receive(
     ctx: StockContext,
-    input: { ingredientId: string; qtyMilli: number; totalCostSatang: number; expiresAt: number | null; lotNo: string | null; receivedAt: number; source?: 'receive' | 'opening' },
+    input: {
+      ingredientId: string
+      qtyMilli: number
+      totalCostSatang: number
+      expiresAt: number | null
+      lotNo: string | null
+      receivedAt: number
+      source?: 'receive' | 'opening' | 'count_adjust'
+      /** ledger reason; defaults to 'receive' ('opening' for source opening) */
+      reason?: 'receive' | 'opening' | 'count_adjust' | 'adjust'
+      receiptId?: string | null
+      poLineId?: string | null
+      refType?: string
+      refId?: string
+    },
   ): { lotId: string; settledMilli: number } {
     this.assertTx()
     const lotId = uuidv7(ctx.at)
@@ -138,6 +170,8 @@ export class StockService {
       branch_id: ctx.branchId,
       ingredient_id: input.ingredientId,
       lot_no: input.lotNo,
+      receipt_id: input.receiptId ?? null,
+      po_line_id: input.poLineId ?? null,
       source: input.source ?? 'receive',
       qty_received_milli: input.qtyMilli,
       qty_remaining_milli: input.qtyMilli,
@@ -154,9 +188,9 @@ export class StockService {
       lot_id: lotId,
       delta_qty_milli: input.qtyMilli,
       cost_satang: input.totalCostSatang,
-      reason: input.source === 'opening' ? 'opening' : 'receive',
-      ref_type: 'stock_lot',
-      ref_id: lotId,
+      reason: input.reason ?? (input.source === 'opening' ? 'opening' : 'receive'),
+      ref_type: input.refType ?? 'stock_lot',
+      ref_id: input.refId ?? lotId,
       reverses_id: null,
       user_id: ctx.userId,
       device_id: ctx.deviceId,

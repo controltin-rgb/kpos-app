@@ -8,6 +8,7 @@ import { useAppEvent } from '@renderer/lib/events'
 import { formatDateTimeShort, money, vatPct } from '@renderer/lib/format'
 import { useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
+import { TaxIssueDialog } from './reports'
 
 const o = t.orders
 const STATUS: Record<BillStatus, { bg: string; fg: string }> = {
@@ -32,6 +33,7 @@ export function OrdersPage() {
   const [list, setList] = useState<BillList | null>(null)
   const [bill, setBill] = useState<BillDetailDto | null>(null)
   const [action, setAction] = useState<'void' | 'refund' | null>(null)
+  const [taxOpen, setTaxOpen] = useState(false)
 
   const query = useCallback(
     () =>
@@ -181,11 +183,24 @@ export function OrdersPage() {
                   <span className="text-muted-foreground">{o.subtotal}</span>
                   <span>{money(bill.subtotalSatang)}</span>
                 </div>
-                {bill.discountSatang > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{o.discount}</span>
-                    <span>-{money(bill.discountSatang)}</span>
-                  </div>
+                {bill.discounts.length > 0
+                  ? bill.discounts.map((d, i) => (
+                      <div key={i} className="flex justify-between">
+                        <span className="text-muted-foreground">{d.description}</span>
+                        <span>-{money(d.amountSatang)}</span>
+                      </div>
+                    ))
+                  : bill.discountSatang > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">{o.discount}</span>
+                        <span>-{money(bill.discountSatang)}</span>
+                      </div>
+                    )}
+                {bill.member && (
+                  <span className="text-xs text-muted-foreground">
+                    {t.pos.memberTitle}: {bill.member.name ?? bill.member.phoneMasked} · +{bill.member.pointsEarned}
+                    {bill.member.pointsRedeemed ? ` / −${bill.member.pointsRedeemed}` : ''}
+                  </span>
                 )}
                 {bill.vatMode === 'inclusive' && (
                   <div className="flex justify-between">
@@ -220,7 +235,7 @@ export function OrdersPage() {
                 <OutlineButton className="min-h-12 flex-1" onClick={() => void reprint()}>
                   {o.reprint}
                 </OutlineButton>
-                <OutlineButton className="min-h-12 flex-1" onClick={() => toast(o.taxInvoiceSoon, 'info')}>
+                <OutlineButton className="min-h-12 flex-1" disabled={bill.status !== 'paid' || !can('orders:tax_invoice')} onClick={() => setTaxOpen(true)}>
                   {o.taxInvoice}
                 </OutlineButton>
               </div>
@@ -241,6 +256,7 @@ export function OrdersPage() {
           )}
         </aside>
       </div>
+      {bill && taxOpen && <TaxIssueDialog bill={bill} onClose={() => setTaxOpen(false)} />}
       {bill && action && (
         <ReverseDialog
           bill={bill}
