@@ -1,0 +1,27 @@
+# Normalise line endings so the project behaves the same on macOS and Windows.
+* text=auto eol=lf
+
+# Migration files are checksummed (schema_migrations.sha256, CLAUDE.md rule 7):
+# a CRLF checkout on Windows would change the hash and the app would refuse to start.
+# Never remove these two lines.
+migrations/*.sql text eol=lf
+*.sql text eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files: never touch
+*.docx binary
+*.xlsx binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.sqlite binary

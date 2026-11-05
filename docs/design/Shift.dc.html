@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>KPOSS ปิดกะ</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Noto Sans Thai',system-ui,sans-serif}
+</style>
+</helmet>
+<div style="min-height: 900px; box-sizing: border-box; padding: 24px 28px 32px; display: flex; flex-direction: column; gap: 18px; background: #F7F5F2; color: #1F2430; font-family: 'Noto Sans Thai', system-ui, sans-serif">
+
+  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px">
+    <div style="display: flex; align-items: center; gap: 14px; flex: 1 1 360px">
+      <div style="width: 52px; height: 52px; border-radius: 15px; background: linear-gradient(135deg, #34C98A, #1BA56B); box-shadow: 0 8px 16px rgba(27, 165, 107, 0.3); display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 26px; font-weight: 700">ปิดกะ · นับเงินสดในลิ้นชัก</h1><div style="font-size: 13px; color: #5C6270">กะเปิดโดย [พนักงาน] เมื่อ [วันที่ เวลา] · [ชื่อสาขา] · ตัวเลขเป็นข้อมูลตัวอย่าง</div></div>
+    </div>
+    <div style="display: inline-flex; gap: 8px">
+      <span style="display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; border-radius: 19px; background: #DDF5E8; color: #11724A; font-size: 13px; font-weight: 600"><span style="width: 8px; height: 8px; border-radius: 50%; background: #1BA56B; display: inline-block"></span>Online</span>
+      <span style="display: inline-flex; align-items: center; height: 38px; padding: 0 14px; border-radius: 19px; background: #EDE9FB; color: #4B2FB8; font-size: 13px; font-weight: 600">กะเปิดอยู่</span>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+
+    <section style="flex: 1.3 1 460px; min-width: 0; background: #FFFFFF; border: 1px solid #EFEBE6; border-radius: 22px; padding: 22px; display: flex; flex-direction: column; gap: 16px">
+      <h2 style="margin: 0; font-size: 17px; font-weight: 600">นับเงินสดจริง แยกตามชนิด</h2>
+      <div style="display: grid; grid-template-columns: 1fr 120px 130px; gap: 10px 14px; align-items: center; font-size: 14px">
+        <span style="font-size: 12px; color: #5C6270; font-weight: 600">ชนิด</span><span style="font-size: 12px; color: #5C6270; font-weight: 600">จำนวน (ใบ/เหรียญ)</span><span style="font-size: 12px; color: #5C6270; font-weight: 600; text-align: right">รวม</span>
+        <sc-for list="{{rows}}" as="r" hint-placeholder-count="10">
+          <span style="display: flex; align-items: center; gap: 10px"><span style="{{r.tile}}">{{r.short}}</span>{{r.label}}</span>
+          <input type="number" min="0" aria-label="{{r.aria}}" value="{{r.count}}" onChange="{{r.change}}" style="width: 100%; box-sizing: border-box; height: 44px; border: 1px solid #E8E4DF; border-radius: 12px; background: #F8F6F3; padding: 0 12px; font-size: 15px; font-family: inherit; color: #1F2430; text-align: right">
+          <span style="text-align: right; font-weight: 600">{{r.sumText}}</span>
+        </sc-for>
+      </div>
+      <div style="border-top: 1px solid #EFEBE6; padding-top: 14px; display: flex; justify-content: space-between; align-items: baseline"><span style="font-size: 16px; font-weight: 700">เงินสดจริงที่นับได้</span><span style="font-size: 28px; font-weight: 700; color: #4B2FB8">{{actualText}}</span></div>
+    </section>
+
+    <div style="flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+      <section style="background: #FFFFFF; border: 1px solid #EFEBE6; border-radius: 22px; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+        <h2 style="margin: 0; font-size: 17px; font-weight: 600">คำนวณยอดต่าง (Over/Short)</h2>
+        <div style="display: flex; justify-content: space-between; font-size: 14px"><span style="color: #5C6270">เงินทอนเริ่มต้น (Float)</span><span>฿ 1,500</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 14px"><span style="color: #5C6270">ยอดขายเงินสด</span><span>+ ฿ 6,240</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 14px"><span style="color: #5C6270">ค่าใช้จ่ายเงินสด (Petty Cash / Payout)</span><span>− ฿ 180</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: 600; border-top: 1px solid #EFEBE6; padding-top: 10px"><span>เงินสดที่ควรมี</span><span>฿ 7,560</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: 600"><span>เงินสดจริง</span><span>{{actualText}}</span></div>
+        <div style="{{diffBox}}"><span style="font-size: 15px; font-weight: 700">{{diffLabel}}</span><span style="font-size: 24px; font-weight: 700">{{diffText}}</span></div>
+        <div style="font-size: 12px; color: #5C6270">Over/Short = เงินสดจริง − (เงินทอนเริ่มต้น + ยอดขายเงินสด − ค่าใช้จ่ายเงินสด)</div>
+      </section>
+      <section style="background: #FFFFFF; border: 1px solid #EFEBE6; border-radius: 22px; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+        <h2 style="margin: 0; font-size: 17px; font-weight: 600">ตัวอย่าง Z-Report แยกช่องทางชำระเงิน</h2>
+        <div style="display: flex; justify-content: space-between; font-size: 14px"><span style="display: inline-flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; background: #1BA56B"></span>เงินสด</span><span>฿ 6,240</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 14px"><span style="display: inline-flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; background: #6A47DB"></span>PromptPay</span><span>฿ 4,050</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 14px"><span style="display: inline-flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; background: #F7791E"></span>Delivery (Grab, Lineman, ShopeeFood, Foodpanda)</span><span>฿ 2,190</span></div>
+        <div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; border-top: 1px solid #EFEBE6; padding-top: 10px"><span>รวมทั้งกะ</span><span>฿ 12,480</span></div>
+      </section>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px">
+        <button type="button" style="flex: 1 1 180px; min-height: 56px; border: 0; border-radius: 16px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40, 30, 60, 0.15); font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer">พิมพ์สลิป Z-Report</button>
+        <button type="button" style="flex: 1 1 180px; min-height: 56px; border: 0; border-radius: 16px; background: linear-gradient(90deg, #6A47DB, #9776F6); box-shadow: 0 10px 22px rgba(106, 71, 219, 0.32); color: #FFFFFF; font-family: inherit; font-size: 15px; font-weight: 700; cursor: pointer">ยืนยันปิดกะ</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":900}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { counts: { b1000: 5, b500: 4, b100: 5, b50: 0, b20: 2, c10: 0, c5: 0, c2: 0, c1: 0, c05: 0 } };
+}
+renderVals() {
+const fmt = (n) => '฿ ' + n.toLocaleString('en-US');
+const defs = [
+{ id: 'b1000', label: 'ธนบัตร 1,000', short: '1000', v: 1000, g: 'linear-gradient(135deg, #8B6CF0, #6A47DB)' },
+{ id: 'b500', label: 'ธนบัตร 500', short: '500', v: 500, g: 'linear-gradient(135deg, #F05A8E, #E23B76)' },
+{ id: 'b100', label: 'ธนบัตร 100', short: '100', v: 100, g: 'linear-gradient(135deg, #F4616A, #DC3A44)' },
+{ id: 'b50', label: 'ธนบัตร 50', short: '50', v: 50, g: 'linear-gradient(135deg, #4C8DF6, #2F6FE0)' },
+{ id: 'b20', label: 'ธนบัตร 20', short: '20', v: 20, g: 'linear-gradient(135deg, #34C98A, #1BA56B)' },
+{ id: 'c10', label: 'เหรียญ 10', short: '10', v: 10, g: 'linear-gradient(135deg, #F7C23A, #E5A10C)' },
+{ id: 'c5', label: 'เหรียญ 5', short: '5', v: 5, g: 'linear-gradient(135deg, #F7C23A, #E5A10C)' },
+{ id: 'c2', label: 'เหรียญ 2', short: '2', v: 2, g: 'linear-gradient(135deg, #F7C23A, #E5A10C)' },
+{ id: 'c1', label: 'เหรียญ 1', short: '1', v: 1, g: 'linear-gradient(135deg, #F7C23A, #E5A10C)' },
+{ id: 'c05', label: 'เหรียญ 50 สตางค์', short: '.50', v: 0.5, g: 'linear-gradient(135deg, #F7C23A, #E5A10C)' }
+];
+const counts = this.state.counts;
+let actual = 0;
+const rows = defs.map((d) => {
+const n = counts[d.id] || 0;
+actual += n * d.v;
+return {
+label: d.label,
+short: d.short,
+aria: 'จำนวน ' + d.label,
+count: n,
+sumText: fmt(n * d.v),
+tile: 'min-width: 44px; height: 30px; padding: 0 6px; box-sizing: border-box; border-radius: 9px; color: #FFFFFF; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; background: ' + d.g,
+change: (e) => {
+const v = Math.max(0, parseInt(e.target.value || '0', 10) || 0);
+this.setState((st) => ({ counts: { ...st.counts, [d.id]: v } }));
+}
+};
+});
+const expected = 7560;
+const diff = actual - expected;
+const ok = diff === 0;
+const over = diff > 0;
+const bg = ok ? '#DDF5E8' : over ? '#FFEBCC' : '#FDE3E5';
+const fg = ok ? '#11724A' : over ? '#7A4A00' : '#A6232B';
+return {
+rows,
+actualText: fmt(actual),
+diffLabel: ok ? 'ตรงกัน' : over ? 'เงินเกิน (Over)' : 'เงินขาด (Short)',
+diffText: (diff > 0 ? '+ ' : diff < 0 ? '− ' : '') + fmt(Math.abs(diff)),
+diffBox: 'display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-radius: 14px; background: ' + bg + '; color: ' + fg
+};
+}
+}
+</script>
+</body>
+</html>

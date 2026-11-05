@@ -1,0 +1,32 @@
+appId: com.korn.kposs
+productName: KPOSS
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+  - '!**/*.{map,ts,tsx}'
+  - '!docs/**'
+  - '!tests/**'
+  - '!migrations/**'
+extraResources:
+  # SQL migrations are read at runtime by src/main/db/migrate.ts (phase 1)
+  - from: migrations
+    to: migrations
+    filter: ['*.sql']
+asarUnpack:
+  # native module must live outside the asar archive
+  - node_modules/better-sqlite3/**
+npmRebuild: true
+mac:
+  target: dmg
+  category: public.app-category.business
+  identity: null # unsigned until a signing certificate is configured
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target: AppImage

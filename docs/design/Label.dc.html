@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>KPOSS พิมพ์ฉลาก A4</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Noto Sans Thai',system-ui,sans-serif}
+.lbl-in{min-height:44px;box-sizing:border-box;width:100%;padding:0 14px;border:1.5px solid #E6E1D9;border-radius:14px;background:#FFFFFF;font-family:inherit;font-size:15px;color:#1F2430}
+.lbl-in:focus{outline:2px solid #9776F6;outline-offset:1px}
+</style>
+</helmet>
+<div style="min-height: 1300px; box-sizing: border-box; padding: 24px; display: flex; flex-wrap: wrap; gap: 20px; background: #F7F5F2; color: #1F2430; font-family: 'Noto Sans Thai', system-ui, sans-serif">
+
+  <aside aria-label="ตัวกรองและตั้งค่า" style="flex: 0 0 380px; max-width: 100%; box-sizing: border-box; background: #FFFFFF; border-radius: 22px; box-shadow: 0 10px 30px rgba(60, 40, 90, 0.08); padding: 22px; display: flex; flex-direction: column; gap: 18px; align-self: flex-start">
+    <div style="display: flex; align-items: center; gap: 12px">
+      <div style="width: 48px; height: 48px; border-radius: 14px; background: linear-gradient(135deg, #8B6CF0, #6A47DB); box-shadow: 0 8px 16px rgba(106, 71, 219, 0.28); display: flex; align-items: center; justify-content: center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 8V3h10v5"/><rect x="4" y="8" width="16" height="9" rx="2"/><path d="M7 14h10v7H7z"/></svg></div>
+      <div style="display: flex; flex-direction: column"><h1 style="margin: 0; font-size: 22px; font-weight: 700">พิมพ์ฉลากสินค้า</h1><span style="font-size: 13px; color: #5C6270">กระดาษ A4 · ข้อมูลเป็นตัวอย่าง</span></div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px">
+      <span style="font-size: 13px; font-weight: 700; color: #6A47DB; letter-spacing: 0.04em">รูปแบบฉลาก</span>
+      <label style="display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">ประเภทฉลาก
+        <select class="lbl-in" onChange="{{setKind}}"><option value="cup">ฉลากแก้ว/ถุงเครื่องดื่ม</option><option value="exp">ฉลากวันหมดอายุวัตถุดิบ</option><option value="shelf">ป้ายราคาหน้าชั้น</option></select>
+      </label>
+      <label style="display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">ขนาดฉลาก (กว้าง × สูง มม.)
+        <select class="lbl-in" onChange="{{setSize}}"><option value="0">50 × 30 · 3×8 = 24 ดวง</option><option value="1">60 × 40 · 3×6 = 18 ดวง</option><option value="2">70 × 40 · 2×6 = 12 ดวง</option><option value="3">90 × 60 · 2×4 = 8 ดวง</option></select>
+      </label>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap">
+        <label style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600"><span>ตัวอักษรชื่อ: {{fontSize}} pt
+          </span><input type="range" min="7" max="16" value="{{fontSize}}" onInput="{{setFont}}" style="width: 100%; min-height: 44px; accent-color: #6A47DB">
+        </label>
+        <div style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">จำนวนต่อรายการ
+          <div style="display: flex; align-items: center; gap: 8px"><button type="button" aria-label="ลดจำนวน" onClick="{{decCopies}}" style="width: 44px; height: 44px; border: 1.5px solid #E6E1D9; border-radius: 14px; background: #FFFFFF; font-size: 20px; cursor: pointer">−</button><span style="min-width: 36px; text-align: center; font-size: 18px; font-weight: 700">{{copies}}</span><button type="button" aria-label="เพิ่มจำนวน" onClick="{{incCopies}}" style="width: 44px; height: 44px; border: 0; border-radius: 14px; background: #EDE9FB; color: #4B2FB8; font-size: 20px; cursor: pointer">+</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 12px; border-top: 1px solid #EFEBE6; padding-top: 16px">
+      <div style="display: flex; align-items: center; justify-content: space-between"><span style="font-size: 13px; font-weight: 700; color: #6A47DB; letter-spacing: 0.04em">ตัวกรองสินค้า</span><button type="button" onClick="{{resetFilters}}" style="min-height: 44px; padding: 0 8px; border: 0; background: transparent; color: #6A47DB; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer">ล้างตัวกรอง</button></div>
+      <input class="lbl-in" type="search" placeholder="ค้นหาชื่อสินค้า" value="{{q}}" onInput="{{setQ}}" aria-label="ค้นหาชื่อสินค้า">
+      <div style="display: flex; gap: 10px; flex-wrap: wrap">
+        <label style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">หมวดสินค้า
+          <select class="lbl-in" value="{{cat}}" onChange="{{setCat}}"><option value="all">ทั้งหมด</option><option value="coffee">กาแฟ</option><option value="tea">ชา</option><option value="shake">ปั่น</option></select>
+        </label>
+        <label style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">สถานะขาย
+          <select class="lbl-in" value="{{status}}" onChange="{{setStatus}}"><option value="all">ทั้งหมด</option><option value="active">เปิดขาย</option><option value="off">ปิดขาย</option></select>
+        </label>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap">
+        <label style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">ขนาดแก้ว
+          <select class="lbl-in" value="{{oz}}" onChange="{{setOz}}"><option value="all">ทุกขนาด</option><option value="16">16 oz</option><option value="22">22 oz</option></select>
+        </label>
+        <label style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">ระดับความหวาน
+          <select class="lbl-in" value="{{sweet}}" onChange="{{setSweet}}"><option value="all">ทุกระดับ</option><option value="0">0%</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option></select>
+        </label>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap">
+        <label style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">Topping
+          <select class="lbl-in" value="{{topping}}" onChange="{{setTopping}}"><option value="all">ทั้งหมด</option><option value="yes">มี Topping</option><option value="no">ไม่มี Topping</option></select>
+        </label>
+        <label style="flex: 1 1 150px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600">เรียงลำดับ
+          <select class="lbl-in" value="{{sort}}" onChange="{{setSort}}"><option value="name">ชื่อ ก–ฮ</option><option value="priceAsc">ราคาต่ำ → สูง</option><option value="priceDesc">ราคาสูง → ต่ำ</option></select>
+        </label>
+      </div>
+      <label style="display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600"><span>ราคาไม่เกิน: ฿{{maxPrice}}
+        </span><input type="range" min="20" max="120" step="5" value="{{maxPrice}}" onInput="{{setMaxPrice}}" style="width: 100%; min-height: 44px; accent-color: #6A47DB">
+      </label>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px; border-top: 1px solid #EFEBE6; padding-top: 16px">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px"><span style="font-size: 13px; font-weight: 700; color: #6A47DB; letter-spacing: 0.04em">เลือกสินค้า · {{pickedCount}} จาก {{shownCount}} รายการ</span></div>
+      <div style="display: flex; gap: 8px">
+        <button type="button" onClick="{{selectAll}}" style="flex: 1; min-height: 44px; border: 0; border-radius: 14px; background: #EDE9FB; color: #4B2FB8; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer">เลือกทั้งหมด ({{shownCount}})</button>
+        <button type="button" onClick="{{clearAll}}" style="flex: 1; min-height: 44px; border: 1.5px solid #E6E1D9; border-radius: 14px; background: #FFFFFF; color: #2B3040; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer">ไม่เลือกเลย</button>
+      </div>
+      <div role="list" aria-label="รายการสินค้า" style="display: flex; flex-direction: column; gap: 6px">
+        <sc-for list="{{products}}" as="p" hint-placeholder-count="4">
+          <div role="listitem" style="display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 4px 12px; border-radius: 14px; background: #F7F5F2; flex: 0 0 auto">
+            <span style="{{p.dot}}"></span>
+            <div style="flex: 1; min-width: 0; display: flex; flex-direction: column"><span style="font-size: 15px; font-weight: 600">{{p.name}}</span><span style="font-size: 12px; color: #5C6270">{{p.sub}}</span></div>
+            <button type="button" role="switch" aria-checked="{{p.onStr}}" aria-label="{{p.name}}" onClick="{{p.toggle}}" style="{{p.track}}"><span style="{{p.knob}}"></span></button>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+        <button type="button" onClick="{{prevPage}}" aria-label="หน้าก่อนหน้า" style="{{prevStyle}}">ก่อนหน้า</button>
+        <span style="font-size: 14px; color: #5C6270; text-align: center">หน้า {{pageNo}} / {{pageCount}}<br><span style="font-size: 12px">แสดง {{rangeText}}</span></span>
+        <button type="button" onClick="{{nextPage}}" aria-label="หน้าถัดไป" style="{{nextStyle}}">ถัดไป</button>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 4px; border-top: 1px solid #EFEBE6; padding-top: 16px">
+      <span style="font-size: 13px; font-weight: 700; color: #6A47DB; letter-spacing: 0.04em">ข้อมูลบนฉลาก</span>
+      <sc-for list="{{toggles}}" as="t" hint-placeholder-count="4">
+        <div style="display: flex; align-items: center; justify-content: space-between; min-height: 48px"><span style="font-size: 15px">{{t.label}}</span><button type="button" role="switch" aria-checked="{{t.onStr}}" aria-label="{{t.label}}" onClick="{{t.toggle}}" style="{{t.track}}"><span style="{{t.knob}}"></span></button></div>
+      </sc-for>
+    </div>
+
+    <button type="button" style="min-height: 52px; border: 0; border-radius: 26px; background: linear-gradient(90deg, #6A47DB, #9776F6); color: #FFFFFF; font-family: inherit; font-size: 17px; font-weight: 700; cursor: pointer; box-shadow: 0 10px 20px rgba(106, 71, 219, 0.3)">พิมพ์ {{total}} ฉลาก</button>
+  </aside>
+
+  <main aria-label="ตัวอย่างหน้ากระดาษ" style="flex: 1 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 14px; align-items: center">
+    <div style="width: 100%; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between">
+      <span style="font-size: 18px; font-weight: 700">ตัวอย่างหน้ากระดาษ (Live Preview)</span>
+      <span style="{{statusStyle}}">{{statusText}}</span>
+    </div>
+    <div style="background: #FFFFFF; box-shadow: 0 12px 34px rgba(40, 30, 60, 0.18); width: 560px; height: 792px; padding: 27px; box-sizing: border-box; display: grid; grid-template-columns: {{gridCols}}; grid-auto-rows: {{rowH}}; align-content: start">
+      <sc-for list="{{cells}}" as="c" hint-placeholder-count="6">
+        <div style="{{c.style}}">
+          <span style="{{c.accent}}"></span>
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; justify-content: space-between">
+            <div style="display: flex; flex-direction: column; gap: 1px">
+              <span style="{{c.tagStyle}}">{{c.tag}}</span>
+              <span style="{{c.nameStyle}}">{{c.name}}</span>
+              <span style="{{c.modsStyle}}">{{c.mods}}</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0">
+              <span style="{{c.priceStyle}}">{{c.price}}</span>
+              <span style="{{c.dateStyle}}">{{c.date}}</span>
+            </div>
+          </div>
+          <span style="{{c.qrStyle}}" role="img" aria-label="QR Code ตัวอย่าง"></span>
+        </div>
+      </sc-for>
+    </div>
+    <span style="font-size: 13px; color: #5C6270">สัดส่วนจริง A4 (210 × 297 มม.) · ขอบกระดาษ 10 มม. · QR เป็นลวดลายตัวอย่าง ไม่ใช่ QR จริง</span>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1300}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { page: 0, size: 0, font: 10, copies: 1, kind: 'cup', q: '', cat: 'all', status: 'all', oz: 'all', sweet: 'all', topping: 'all', sort: 'name', maxPrice: 120, off: {}, showPrice: true, showQR: true, showDate: true, showMods: true };
+this.sizes = [{ w: 50, h: 30, cols: 3, rows: 8 }, { w: 60, h: 40, cols: 3, rows: 6 }, { w: 70, h: 40, cols: 2, rows: 6 }, { w: 90, h: 60, cols: 2, rows: 4 }];
+this.catColor = { coffee: '#F7791E', tea: '#1BA56B', shake: '#E23B76', raw: '#4C8DF6' };
+this.catName = { coffee: 'กาแฟ', tea: 'ชา', shake: 'ปั่น', raw: 'วัตถุดิบ' };
+this.prods = [
+{ id: 1, name: 'กาแฟเย็น', price: 65, cat: 'coffee', oz: 16, sweet: 50, topping: false, active: true, mods: '16 oz · หวาน 50%' },
+{ id: 2, name: 'ลาเต้ร้อน', price: 65, cat: 'coffee', oz: 16, sweet: 100, topping: false, active: true, mods: '16 oz · หวาน 100%' },
+{ id: 3, name: 'อเมริกาโน่เย็น', price: 55, cat: 'coffee', oz: 22, sweet: 0, topping: false, active: true, mods: '22 oz · หวาน 0%' },
+{ id: 4, name: 'ชานมไข่มุก', price: 75, cat: 'tea', oz: 22, sweet: 50, topping: true, active: true, mods: '22 oz · หวาน 50% · ไข่มุก' },
+{ id: 5, name: 'ชาเขียวนม', price: 70, cat: 'tea', oz: 16, sweet: 25, topping: true, active: true, mods: '16 oz · หวาน 25% · วิปครีม' },
+{ id: 6, name: 'ชามะนาว', price: 45, cat: 'tea', oz: 16, sweet: 100, topping: false, active: false, mods: '16 oz · หวาน 100%' },
+{ id: 7, name: 'สตรอว์เบอร์รีปั่น', price: 80, cat: 'shake', oz: 22, sweet: 100, topping: false, active: true, mods: '22 oz · หวาน 100%' },
+{ id: 8, name: 'โกโก้ปั่น', price: 75, cat: 'shake', oz: 22, sweet: 50, topping: true, active: true, mods: '22 oz · หวาน 50% · พุดดิ้ง' },
+{ id: 9, name: 'นมสด 1 ลิตร', price: 0, cat: 'raw', oz: 0, sweet: 0, topping: false, active: true, mods: 'Lot L2611-04', exp: 'EXP 12/11/69' },
+{ id: 10, name: 'ไข่มุกต้มสุก', price: 0, cat: 'raw', oz: 0, sweet: 0, topping: false, active: true, mods: 'Lot L2611-09', exp: 'EXP 08/11/69' }
+];
+const extra = [['คาปูชิโนร้อน', 'coffee', 65], ['มอคค่าเย็น', 'coffee', 70], ['เอสเปรสโซ่', 'coffee', 50], ['คาราเมลมัคคิอาโต้', 'coffee', 75], ['กาแฟมะพร้าว', 'coffee', 80], ['ชาไทยเย็น', 'tea', 55], ['ชาไทยนมสด', 'tea', 60], ['ชาดำเย็น', 'tea', 40], ['ชาพีช', 'tea', 60], ['ชาลิ้นจี่', 'tea', 60], ['มัทฉะลาเต้', 'tea', 85], ['ชาอู่หลง', 'tea', 55], ['สตรอว์เบอร์รีโยเกิร์ตปั่น', 'shake', 85], ['มะม่วงปั่น', 'shake', 75], ['กล้วยปั่น', 'shake', 70], ['โอรีโอปั่น', 'shake', 80], ['มัทฉะปั่น', 'shake', 85], ['เผือกปั่น', 'shake', 75], ['ช็อกโกแลตเย็น', 'coffee', 65], ['นมชมพูเย็น', 'shake', 55], ['น้ำผึ้งมะนาวโซดา', 'tea', 60], ['อิตาเลียนโซดาบลูฮาวาย', 'tea', 60], ['เลมอนโซดา', 'tea', 55], ['ชาเขียวมะลิ', 'tea', 50], ['แคนตาลูปปั่น', 'shake', 75], ['เนสเต้ลาเต้', 'coffee', 60]];
+extra.forEach((e, i) => this.prods.push({ id: 100 + i, name: e[0], price: e[2], cat: e[1], oz: i % 2 ? 22 : 16, sweet: [0, 25, 50, 100][i % 4], topping: i % 5 === 0, active: i % 9 !== 0, mods: (i % 2 ? '22' : '16') + ' oz · หวาน ' + [0, 25, 50, 100][i % 4] + '%' }));
+const off0 = {}; extra.forEach((e, i) => { off0[100 + i] = true; }); this.state.off = off0;
+this.qrCache = {};
+}
+qr(id) {
+if (this.qrCache[id]) return this.qrCache[id];
+const n = 25;
+let seed = id * 2654435761 % 4294967296;
+const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+const g = [];
+for (let y = 0; y < n; y++) { g.push([]); for (let x = 0; x < n; x++) g[y].push(rnd() > 0.52 ? 1 : 0); }
+const finder = (ox, oy) => {
+for (let y = -1; y <= 7; y++) for (let x = -1; x <= 7; x++) {
+const X = ox + x, Y = oy + y;
+if (X < 0 || Y < 0 || X >= n || Y >= n) continue;
+const ring = x >= 0 && x <= 6 && y >= 0 && y <= 6 && (x === 0 || x === 6 || y === 0 || y === 6);
+const core = x >= 2 && x <= 4 && y >= 2 && y <= 4;
+g[Y][X] = ring || core ? 1 : 0;
+}
+};
+finder(0, 0); finder(n - 7, 0); finder(0, n - 7);
+let d = '';
+for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (g[y][x]) d += 'M' + x + ' ' + y + 'h1v1h-1z';
+const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 ' + (n + 4) + ' ' + (n + 4) + '" shape-rendering="crispEdges"><rect x="-2" y="-2" width="' + (n + 4) + '" height="' + (n + 4) + '" fill="#fff"/><path d="' + d + '" fill="#1F2430"/></svg>';
+const url = 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+this.qrCache[id] = url;
+return url;
+}
+renderVals() {
+const s = this.state;
+const sz = this.sizes[s.size];
+const k = 560 / 210;
+const cw = sz.w * k, ch = sz.h * k;
+const capacity = sz.cols * sz.rows;
+const q = s.q.trim();
+let shown = this.prods.filter((p) => {
+if (s.kind === 'exp' && p.cat !== 'raw') return false;
+if (s.kind !== 'exp' && p.cat === 'raw') return false;
+if (s.cat !== 'all' && p.cat !== s.cat) return false;
+if (s.status === 'active' && !p.active) return false;
+if (s.status === 'off' && p.active) return false;
+if (s.oz !== 'all' && String(p.oz) !== s.oz) return false;
+if (s.sweet !== 'all' && String(p.sweet) !== s.sweet) return false;
+if (s.topping === 'yes' && !p.topping) return false;
+if (s.topping === 'no' && p.topping) return false;
+if (q && p.name.indexOf(q) < 0) return false;
+if (p.cat !== 'raw' && p.price > s.maxPrice) return false;
+return true;
+});
+shown = shown.slice().sort((a, b) => s.sort === 'priceAsc' ? a.price - b.price : s.sort === 'priceDesc' ? b.price - a.price : a.name.localeCompare(b.name, 'th'));
+const PS = 6;
+const pageCount = Math.max(1, Math.ceil(shown.length / PS));
+const page = Math.min(s.page, pageCount - 1);
+const pageItems = shown.slice(page * PS, page * PS + PS);
+const navBase = 'flex:0 0 auto;min-height:44px;padding:0 16px;border-radius:14px;font-family:inherit;font-size:14px;font-weight:600;border:0;';
+const prevOk = page > 0, nextOk = page < pageCount - 1;
+const prevStyle = navBase + (prevOk ? 'background:#EDE9FB;color:#4B2FB8;cursor:pointer;' : 'background:#F0EDE8;color:#A9A59E;cursor:not-allowed;');
+const nextStyle = navBase + (nextOk ? 'background:#EDE9FB;color:#4B2FB8;cursor:pointer;' : 'background:#F0EDE8;color:#A9A59E;cursor:not-allowed;');
+const rangeText = shown.length ? (page * PS + 1) + '–' + (page * PS + pageItems.length) + ' จาก ' + shown.length : 'ไม่พบรายการ';
+const picked = shown.filter((p) => !s.off[p.id]);
+const total = picked.length * s.copies;
+const px = (pt) => pt * 0.3528 * k;
+const namePx = px(s.font);
+const qrSize = s.showQR ? Math.min(ch - 14, cw * 0.36) : 0;
+const textW = cw - qrSize - (s.showQR ? 30 : 22);
+const expanded = [];
+picked.forEach((p) => { for (let i = 0; i < s.copies; i++) expanded.push(p); });
+const isShelf = s.kind === 'shelf';
+const cells = expanded.slice(0, capacity).map((p) => {
+const lines = Math.ceil(p.name.length * namePx * 0.62 / textW);
+const priceStr = p.cat === 'raw' ? '' : '฿' + p.price;
+const pricePx = px(s.font * (isShelf ? 1.9 : 1.25));
+const modsPx = px(6.5);
+const datePx = px(5.5);
+const showPrice = s.showPrice && priceStr;
+const need = 14 + 9 + lines * namePx * 1.25 + (s.showMods ? modsPx * 1.5 : 0) + (showPrice ? pricePx * 1.3 : 0) + (s.showDate ? datePx * 1.4 : 0);
+const bad = need > ch || lines > 2;
+const col = this.catColor[p.cat];
+const dateText = p.cat === 'raw' ? p.exp : 'พิมพ์ 05/11/69';
+return {
+tag: s.kind === 'exp' ? 'วัตถุดิบ' : (isShelf ? 'ราคาขาย' : this.catName[p.cat]),
+tagStyle: 'font-size:' + px(5.5) + 'px;font-weight:700;letter-spacing:0.05em;color:' + col + ';',
+name: p.name,
+nameStyle: 'font-size:' + namePx + 'px;font-weight:700;line-height:1.2;color:#1F2430;overflow:hidden;',
+mods: p.mods,
+modsStyle: s.showMods ? 'font-size:' + modsPx + 'px;color:#5C6270;line-height:1.25;' : 'display:none;',
+price: priceStr,
+priceStyle: showPrice ? 'font-size:' + pricePx + 'px;font-weight:700;color:#4B2FB8;line-height:1.1;' : 'display:none;',
+date: dateText,
+dateStyle: s.showDate ? 'font-size:' + datePx + 'px;color:#7A8090;' + (p.cat === 'raw' ? 'font-weight:700;color:#B42318;' : '') : 'display:none;',
+accent: 'flex:0 0 3px;align-self:stretch;border-radius:2px;background:' + col + ';',
+qrStyle: s.showQR ? 'flex:0 0 ' + qrSize + 'px;width:' + qrSize + 'px;height:' + qrSize + 'px;align-self:center;background-image:' + this.qr(p.id) + ';background-size:100% 100%;border-radius:4px;' : 'display:none;',
+style: 'box-sizing:border-box;width:' + cw + 'px;height:' + ch + 'px;padding:7px 8px;overflow:hidden;display:flex;align-items:stretch;gap:6px;border:1px ' + (bad ? 'solid #DC3A44' : 'dashed #DDD7CE') + ';border-radius:8px;' + (bad ? 'background:#FFF3F3;' : 'background:#FFFFFF;'),
+bad
+};
+});
+const anyBad = cells.some((c) => c.bad);
+const tooMany = total > capacity;
+const base = 'height: 36px; display:inline-flex; align-items:center; padding: 0 16px; border-radius: 18px; font-size: 14px; font-weight: 600;';
+let statusText = 'พอดีหน้ากระดาษ · ' + cells.length + ' ดวง';
+let statusStyle = base + 'background:#DDF5E8; color:#11724A;';
+if (total === 0) { statusText = 'ยังไม่ได้เลือกสินค้า'; statusStyle = base + 'background:#F0EDE8; color:#5C6270;'; }
+else if (tooMany) { statusText = 'เกินหน้ากระดาษ: ' + total + ' ดวง (ใส่ได้ ' + capacity + ')'; statusStyle = base + 'background:#FFE3E3; color:#A6232B;'; }
+else if (anyBad) { statusText = 'ข้อความล้นกรอบฉลาก ลดขนาดตัวอักษรหรือใช้ฉลากใหญ่ขึ้น'; statusStyle = base + 'background:#FFE3E3; color:#A6232B;'; }
+const track = (on) => 'flex:0 0 auto;position:relative;width:52px;height:32px;min-height:32px;padding:0;border:0;border-radius:16px;cursor:pointer;transition:background .15s;background:' + (on ? 'linear-gradient(90deg,#6A47DB,#9776F6)' : '#D5D1CA') + ';';
+const knob = (on) => 'position:absolute;top:3px;left:' + (on ? 23 : 3) + 'px;width:26px;height:26px;border-radius:50%;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,0.3);transition:left .15s;';
+const flag = (key, label) => ({ label, onStr: s[key] ? 'true' : 'false', track: track(s[key]), knob: knob(s[key]), toggle: () => this.setState((st) => ({ [key]: !st[key] })) });
+return {
+fontSize: s.font, copies: s.copies, q: s.q, maxPrice: s.maxPrice, cat: s.cat, status: s.status, oz: s.oz, sweet: s.sweet, topping: s.topping, sort: s.sort,
+pickedCount: picked.length, shownCount: shown.length, total,
+gridCols: 'repeat(' + sz.cols + ', ' + cw + 'px)',
+rowH: ch + 'px',
+cells, statusText, statusStyle,
+pageNo: page + 1, pageCount, rangeText, prevStyle, nextStyle,
+prevPage: () => this.setState({ page: Math.max(0, page - 1) }),
+nextPage: () => this.setState({ page: Math.min(pageCount - 1, page + 1) }),
+products: pageItems.map((p) => { const on = !s.off[p.id]; return { name: p.name, sub: p.cat === 'raw' ? p.mods : this.catName[p.cat] + ' · ฿' + p.price + (p.active ? '' : ' · ปิดขาย'), dot: 'width:10px;height:10px;border-radius:50%;flex:0 0 auto;background:' + this.catColor[p.cat] + ';', onStr: on ? 'true' : 'false', track: track(on), knob: knob(on), toggle: () => this.setState((st) => ({ off: { ...st.off, [p.id]: !st.off[p.id] } })) }; }),
+toggles: [flag('showPrice', 'แสดงราคา'), flag('showQR', 'แสดง QR Code'), flag('showMods', 'แสดงขนาด/ความหวาน/Topping'), flag('showDate', 'แสดงวันที่พิมพ์ / วันหมดอายุ')],
+selectAll: () => this.setState((st) => { const off = { ...st.off }; shown.forEach((p) => { delete off[p.id]; }); return { off }; }),
+clearAll: () => this.setState((st) => { const off = { ...st.off }; shown.forEach((p) => { off[p.id] = true; }); return { off }; }),
+setKind: (e) => this.setState({ page: 0, kind: e.target.value, cat: 'all' }),
+setSize: (e) => this.setState({ size: Number(e.target.value) }),
+setFont: (e) => this.setState({ font: Number(e.target.value) }),
+setQ: (e) => this.setState({ page: 0, q: e.target.value }),
+setCat: (e) => this.setState({ page: 0, cat: e.target.value }),
+setStatus: (e) => this.setState({ page: 0, status: e.target.value }),
+setOz: (e) => this.setState({ page: 0, oz: e.target.value }),
+setSweet: (e) => this.setState({ page: 0, sweet: e.target.value }),
+setTopping: (e) => this.setState({ page: 0, topping: e.target.value }),
+setSort: (e) => this.setState({ page: 0, sort: e.target.value }),
+setMaxPrice: (e) => this.setState({ page: 0, maxPrice: Number(e.target.value) }),
+incCopies: () => this.setState((st) => ({ copies: Math.min(10, st.copies + 1) })),
+decCopies: () => this.setState((st) => ({ copies: Math.max(1, st.copies - 1) })),
+resetFilters: () => this.setState({ page: 0, q: '', cat: 'all', status: 'all', oz: 'all', sweet: 'all', topping: 'all', sort: 'name', maxPrice: 120 })
+};
+}
+}
+</script>
+</body>
+</html>

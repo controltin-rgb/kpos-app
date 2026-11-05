@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>KPOSS KDS จอบาร์</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Noto Sans Thai',system-ui,sans-serif}
+</style>
+</helmet>
+<div style="min-height: 900px; box-sizing: border-box; padding: 20px 24px 28px; display: flex; flex-direction: column; gap: 16px; background: #F7F5F2; color: #1F2430; font-family: 'Noto Sans Thai', system-ui, sans-serif">
+
+  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px">
+    <div style="display: flex; align-items: center; gap: 14px; flex: 1 1 320px">
+      <div style="width: 52px; height: 52px; border-radius: 15px; background: linear-gradient(135deg, #FFA43A, #F7791E); box-shadow: 0 8px 16px rgba(247, 121, 30, 0.3); display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-1.2 11a2 2 0 0 1-2 1.8H8.2a2 2 0 0 1-2-1.8L5 8z"/><path d="M8 8l1-4h6l1 4"/></svg></div>
+      <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 26px; font-weight: 700">จอบาร์ (Bar Station)</h1><div style="font-size: 13px; color: #5C6270">คิวออเดอร์เครื่องดื่ม · อัปเดตสดผ่าน LAN · ข้อมูลเป็นตัวอย่าง</div></div>
+    </div>
+    <div role="group" aria-label="สถานี" style="display: inline-flex; background: #FFFFFF; border-radius: 24px; padding: 4px; box-shadow: 0 1px 3px rgba(40, 30, 60, 0.1)">
+      <button type="button" style="min-height: 44px; padding: 0 20px; border: 0; border-radius: 20px; background: linear-gradient(90deg, #6A47DB, #9776F6); color: #FFFFFF; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer">Bar</button>
+      <button type="button" style="min-height: 44px; padding: 0 20px; border: 0; border-radius: 20px; background: transparent; color: #2B3040; font-family: inherit; font-size: 15px; cursor: pointer">Kitchen</button>
+    </div>
+    <div style="display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 20px; background: #DDF5E8; color: #11724A; font-size: 14px; font-weight: 600"><span style="width: 8px; height: 8px; border-radius: 50%; background: #1BA56B; display: inline-block"></span>เชื่อมต่อเครื่องหลักแล้ว</div>
+  </div>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start">
+
+    <section aria-label="NEW" style="flex: 1 1 320px; min-width: 0; background: #FFF1E3; border-radius: 22px; padding: 14px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 6px"><span style="font-size: 18px; font-weight: 700; color: #8A3F05">NEW · ออเดอร์ใหม่</span><span style="min-width: 32px; height: 32px; box-sizing: border-box; padding: 0 8px; border-radius: 16px; background: #F7791E; color: #FFFFFF; font-weight: 700; display: flex; align-items: center; justify-content: center">{{newCount}}</span></div>
+      <sc-for list="{{newList}}" as="t" hint-placeholder-count="2">
+        <article style="{{t.card}}">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px"><span style="font-size: 22px; font-weight: 700">{{t.no}}</span><span style="font-size: 14px; font-weight: 600; color: #4A5060">{{t.type}}</span></div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px"><span style="font-size: 14px; color: #5C6270">รออยู่ {{t.elapsed}}</span><span style="font-size: 13px; font-weight: 700; color: #A6232B">{{t.late}}</span></div>
+          <sc-for list="{{t.items}}" as="it" hint-placeholder-count="2">
+            <div style="border-top: 1px dashed #D9D2C9; padding-top: 8px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 18px; font-weight: 700">{{it.qty}} × {{it.name}}</span><span style="font-size: 16px; font-weight: 700; color: #B42318">{{it.mods}}</span></div>
+          </sc-for>
+          <button type="button" onClick="{{t.next}}" style="{{t.btn}}">{{t.btnLabel}}</button>
+        </article>
+      </sc-for>
+    </section>
+
+    <section aria-label="PREPARING" style="flex: 1 1 320px; min-width: 0; background: #FFF7DC; border-radius: 22px; padding: 14px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 6px"><span style="font-size: 18px; font-weight: 700; color: #6B4A00">PREPARING · กำลังทำ</span><span style="min-width: 32px; height: 32px; box-sizing: border-box; padding: 0 8px; border-radius: 16px; background: #E5A10C; color: #1F2430; font-weight: 700; display: flex; align-items: center; justify-content: center">{{prepCount}}</span></div>
+      <sc-for list="{{prepList}}" as="t" hint-placeholder-count="2">
+        <article style="{{t.card}}">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px"><span style="font-size: 22px; font-weight: 700">{{t.no}}</span><span style="font-size: 14px; font-weight: 600; color: #4A5060">{{t.type}}</span></div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px"><span style="font-size: 14px; color: #5C6270">เวลา {{t.elapsed}}</span><span style="font-size: 13px; font-weight: 700; color: #A6232B">{{t.late}}</span></div>
+          <sc-for list="{{t.items}}" as="it" hint-placeholder-count="2">
+            <div style="border-top: 1px dashed #D9D2C9; padding-top: 8px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 18px; font-weight: 700">{{it.qty}} × {{it.name}}</span><span style="font-size: 16px; font-weight: 700; color: #B42318">{{it.mods}}</span></div>
+          </sc-for>
+          <button type="button" onClick="{{t.next}}" style="{{t.btn}}">{{t.btnLabel}}</button>
+        </article>
+      </sc-for>
+    </section>
+
+    <section aria-label="READY" style="flex: 1 1 320px; min-width: 0; background: #E4F7EC; border-radius: 22px; padding: 14px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 6px"><span style="font-size: 18px; font-weight: 700; color: #0E5C3A">READY · พร้อมส่งมอบ</span><span style="min-width: 32px; height: 32px; box-sizing: border-box; padding: 0 8px; border-radius: 16px; background: #1BA56B; color: #FFFFFF; font-weight: 700; display: flex; align-items: center; justify-content: center">{{readyCount}}</span></div>
+      <sc-for list="{{readyList}}" as="t" hint-placeholder-count="1">
+        <article style="{{t.card}}">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px"><span style="font-size: 22px; font-weight: 700">{{t.no}}</span><span style="font-size: 14px; font-weight: 600; color: #4A5060">{{t.type}}</span></div>
+          <sc-for list="{{t.items}}" as="it" hint-placeholder-count="1">
+            <div style="border-top: 1px dashed #D9D2C9; padding-top: 8px; display: flex; flex-direction: column; gap: 2px"><span style="font-size: 18px; font-weight: 700">{{it.qty}} × {{it.name}}</span><span style="font-size: 16px; font-weight: 700; color: #B42318">{{it.mods}}</span></div>
+          </sc-for>
+          <button type="button" onClick="{{t.next}}" style="{{t.btn}}">{{t.btnLabel}}</button>
+        </article>
+      </sc-for>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":900}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { tickets: [
+{ id: 1, no: '#A021', type: 'ทานที่ร้าน', status: 'new', elapsed: '00:35', late: '', items: [{ qty: 1, name: 'กาแฟเย็น', mods: '16 oz · หวาน 0% · ไม่ใส่นมสด' }, { qty: 1, name: 'ชานมไข่มุก', mods: '22 oz · หวาน 50% · Topping: พุดดิ้ง' }] },
+{ id: 2, no: '#A022', type: 'กลับบ้าน', status: 'new', elapsed: '00:12', late: '', items: [{ qty: 2, name: 'ลาเต้ร้อน', mods: '16 oz · หวาน 100% · ใส่ถุงกลับบ้าน' }] },
+{ id: 3, no: '#A019', type: 'Grab · [Order ID]', status: 'prep', elapsed: '02:10', late: '', items: [{ qty: 1, name: 'ชาเขียวนม', mods: '16 oz · หวาน 25% · Topping: วิปครีม' }] },
+{ id: 4, no: '#A018', type: 'ทานที่ร้าน', status: 'prep', elapsed: '06:12', late: 'เกินเวลา 5 นาที', items: [{ qty: 2, name: 'กาแฟเย็น', mods: '16 oz · หวาน 125%' }] },
+{ id: 5, no: '#A016', type: 'กลับบ้าน', status: 'ready', elapsed: '', late: '', items: [{ qty: 1, name: 'ชานมไข่มุก', mods: '16 oz · หวาน 50% · Topping: ไข่มุก' }] }
+] };
+}
+renderVals() {
+const base = 'border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 8px; background: #FFFFFF; ';
+const cfg = {
+new: { card: base + 'border: 2px solid #F7791E', btn: 'min-height: 52px; margin-top: 4px; border: 0; border-radius: 14px; background: linear-gradient(135deg, #FFA43A, #F7791E); color: #FFFFFF; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer', label: 'เริ่มทำ' },
+prep: { card: base + 'border: 2px solid #E5A10C', btn: 'min-height: 52px; margin-top: 4px; border: 0; border-radius: 14px; background: linear-gradient(135deg, #F7C23A, #E5A10C); color: #1F2430; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer', label: 'ทำเสร็จแล้ว' },
+ready: { card: base + 'border: 2px solid #1BA56B', btn: 'min-height: 52px; margin-top: 4px; border: 0; border-radius: 14px; background: linear-gradient(135deg, #34C98A, #1BA56B); color: #FFFFFF; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer', label: 'ส่งมอบ (Bump)' }
+};
+const advance = (id) => this.setState((st) => ({
+tickets: st.tickets.map((t) => (t.id === id ? { ...t, status: t.status === 'new' ? 'prep' : 'ready' } : t)).filter((t) => !(t.id === id && st.tickets.find((x) => x.id === id).status === 'ready'))
+}));
+const mk = (status) => this.state.tickets.filter((t) => t.status === status).map((t) => ({
+no: t.no,
+type: t.type,
+elapsed: t.elapsed,
+late: t.late,
+items: t.items,
+card: t.late ? cfg[status].card.replace('#E5A10C', '#DC3A44').replace('#FFFFFF', '#FFF3F3') : cfg[status].card,
+btn: cfg[status].btn,
+btnLabel: cfg[status].label,
+next: () => advance(t.id)
+}));
+const newList = mk('new'), prepList = mk('prep'), readyList = mk('ready');
+return { newList, prepList, readyList, newCount: newList.length, prepCount: prepList.length, readyCount: readyList.length };
+}
+}
+</script>
+</body>
+</html>

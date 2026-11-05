@@ -1,0 +1,45 @@
+/** Machine-readable error codes returned over IPC. The renderer maps them to Thai text (i18n). */
+export const ERROR_CODES = [
+  'UNAUTHENTICATED',
+  'FORBIDDEN',
+  'PASSWORD_CHANGE_REQUIRED',
+  'INVALID_INPUT',
+  'NOT_FOUND',
+  'INVALID_CREDENTIALS',
+  'ACCOUNT_LOCKED',
+  'ACCOUNT_DISABLED',
+  'SETUP_ALREADY_DONE',
+  'USERNAME_TAKEN',
+  'RANK_FORBIDDEN',
+  'PRIVILEGE_ESCALATION',
+  'CANNOT_MODIFY_SELF',
+  'LAST_SUPER_ADMIN',
+  'ROLE_LOCKED',
+  'ROLE_IN_USE',
+  'EMPLOYEE_CAP_REACHED',
+  'INTERNAL',
+] as const
+
+export type ErrorCode = (typeof ERROR_CODES)[number]
+
+export interface ErrorPayload {
+  code: ErrorCode
+  /** zod field errors for INVALID_INPUT */
+  fields?: Record<string, string[]>
+  /** extra data, e.g. lockedUntil for ACCOUNT_LOCKED */
+  data?: Record<string, unknown>
+}
+
+/** Thrown by main-process services; converted to an ErrorPayload by the IPC router. */
+export class AppError extends Error {
+  constructor(
+    readonly code: ErrorCode,
+    readonly data?: Record<string, unknown>,
+    message?: string,
+  ) {
+    super(message ?? code)
+    this.name = 'AppError'
+  }
+}
+
+export type Envelope<T> = { ok: true; data: T } | { ok: false; error: ErrorPayload }

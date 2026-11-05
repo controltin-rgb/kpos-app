@@ -1,0 +1,92 @@
+@import 'tailwindcss';
+@import '@fontsource/noto-sans-thai/400.css';
+@import '@fontsource/noto-sans-thai/500.css';
+@import '@fontsource/noto-sans-thai/600.css';
+@import '@fontsource/noto-sans-thai/700.css';
+
+/*
+ * KPOSS design tokens — source of truth: docs/design/*.dc.html and docx §5.
+ * Exposed both as CSS variables (for shadcn/ui) and Tailwind theme values.
+ */
+:root {
+  --background: #f7f5f2;
+  --foreground: #1f2430;
+  --muted-foreground: #5c6270;
+  --border: #efebe6;
+  --card: #ffffff;
+  --card-foreground: #1f2430;
+  --primary: #6a47db;
+  --primary-to: #9776f6;
+  --primary-foreground: #ffffff;
+  --accent: #ede9fb;
+  --accent-foreground: #4b2fb8;
+  --success: #ddf5e8;
+  --success-foreground: #11724a;
+  --warning: #fff4d6;
+  --warning-foreground: #7a5200;
+  --danger: #ffe3e3;
+  --danger-foreground: #a6232b;
+  --ring: #9776f6;
+  --radius: 20px;
+}
+
+@theme inline {
+  --font-sans: 'Noto Sans Thai', system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-to: var(--primary-to);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-ring: var(--ring);
+
+  /* Icon tile gradients (from → to) */
+  --color-tile-blue-from: #4c8df6;
+  --color-tile-blue-to: #2f6fe0;
+  --color-tile-green-from: #34c98a;
+  --color-tile-green-to: #1ba56b;
+  --color-tile-orange-from: #ffa43a;
+  --color-tile-orange-to: #f7791e;
+  --color-tile-pink-from: #f05a8e;
+  --color-tile-pink-to: #e23b76;
+  --color-tile-teal-from: #2cc4b8;
+  --color-tile-teal-to: #14a094;
+  --color-tile-amber-from: #f7c23a;
+  --color-tile-amber-to: #e5a10c;
+  --color-tile-red-from: #f4616a;
+  --color-tile-red-to: #dc3a44;
+
+  --radius-card: 20px;
+  --radius-card-lg: 22px;
+  --spacing-touch: 44px;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}

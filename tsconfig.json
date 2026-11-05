@@ -1,0 +1,11 @@
+{
+  // Editor-only umbrella config. `npm run typecheck` checks node and web code separately
+  // (tsconfig.node.json / tsconfig.web.json) so renderer code cannot use Node types.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "tests/**/*", "scripts/**/*", "*.config.ts"]
+}

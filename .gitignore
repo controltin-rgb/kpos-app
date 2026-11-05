@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Dependencies and build output
+# ---------------------------------------------------------------------------
+node_modules/
+/out/
+/dist/
+/release/
+/coverage/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+
+# ---------------------------------------------------------------------------
+# Local data — never commit (CLAUDE.md rule 8)
+# ---------------------------------------------------------------------------
+# dev databases and their backups (scripts/migrate.ts writes here)
+/.data/
+# SQLite files (+ WAL/SHM sidecars). App data lives in the OS userData folder, not the repo.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.db
+# backup output at the repo root only — do NOT use an unanchored "backup/":
+# it would also hide the source folder src/main/backup/ (Implement.md §3)
+/backup/
+# license files, signing keys, secrets
+*.LIC
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+!.env.example
+# per-install BetterAuth secret (normally in userData, ignored here as a safeguard)
+auth.key
+
+# ---------------------------------------------------------------------------
+# Editor / OS / tooling (per-machine, differs between Mac and Windows)
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.idea/
+*.swp
+*.suo
+# keep shared VS Code settings if added later; ignore personal state
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+# Claude Code: keep project settings, ignore personal/local ones
+.claude/settings.local.json
+.claude/worktrees/
