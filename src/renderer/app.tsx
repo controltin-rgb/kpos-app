@@ -27,6 +27,9 @@ import { DeliveryCommissionPage, ReportsPage, ZReportPage } from './pages/report
 import { WastePage } from './pages/waste'
 import { ForbiddenPage, PlaceholderPage, SystemPage } from './pages/simple'
 import { UsersPage } from './pages/users'
+import { AuditPage } from './pages/audit'
+import { BackupPage } from './pages/backup'
+import { HostOfflinePage } from './pages/lan'
 
 /** Pages that exist so far; every other menu route shows a phase placeholder. */
 const PAGES: Record<string, () => ReactNode> = {
@@ -50,6 +53,8 @@ const PAGES: Record<string, () => ReactNode> = {
   '/settings': () => <SettingsPage />,
   '/users': () => <UsersPage />,
   '/roles': () => <RolesPage />,
+  '/audit': () => <AuditPage />,
+  '/backup': () => <BackupPage />,
   '/system': () => <SystemPage />,
 }
 
@@ -96,6 +101,7 @@ function Gate() {
   const { status, setup, user } = useSession()
   // the customer display needs no login: it only shows what the POS pushes
   if (window.location.hash.startsWith('#/cfd')) return <CfdPage />
+  if (status === 'offline') return <HostOfflinePage />
   if (status === 'loading') return <div className="flex h-full items-center justify-center text-muted-foreground">{t.common.loading}</div>
   if (setup?.setupRequired) return <SetupPage />
   if (!user) return <LoginPage />

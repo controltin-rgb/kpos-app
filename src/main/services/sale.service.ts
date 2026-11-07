@@ -1,16 +1,19 @@
 import { can, type Actor } from '@main/auth/actor'
 import type { AuthService } from '@main/auth/auth.service'
 import type { Db } from '@main/db/connection'
-import { SalesRepo, type BillRow } from '@main/db/repos/sales.repo'
+import { SalesRepo, type BillRow, type ShiftRow } from '@main/db/repos/sales.repo'
 import { UsersRepo } from '@main/db/repos/users.repo'
 import type { ParsedInput } from '@shared/api'
 import type { BillDetailDto, BillList, BillSummaryDto, PaymentMethod, SaleResult, ShortageNoticeDto } from '@shared/api-sales'
-import { requirementPerUnit, scaleRequirement } from '@shared/bom'
+import { scaleRequirement } from '@shared/bom'
+import { priceLine, type PricedLine } from '@shared/pricing'
+import { formatBillNo } from '@shared/bill-number'
+import type { OfflineBill, SyncResult } from '@shared/sync'
 import { AppError } from '@shared/errors'
 import { uuidv7 } from '@shared/id'
 import { percentOfSatang } from '@shared/money'
 import type { Permission } from '@shared/permissions'
-import { computeBillTotals } from '@shared/sale-totals'
+import { computeBillTotals, type BillTotals } from '@shared/sale-totals'
 import type { AuditService } from './audit.service'
 import type { CatalogService } from './catalog.service'
 import type { DocNumberService } from './doc-number.service'
@@ -29,21 +32,6 @@ const toPromoLine = (l: { productId: string; categoryId: string | null; qty: num
 })
 
 type CheckoutInput = ParsedInput<'pos.checkout'>
-
-interface PricedLine {
-  productId: string
-  sizeId: string | null
-  productName: string
-  sizeLabel: string | null
-  qty: number
-  unitPriceSatang: number
-  vatType: 'vat7' | 'vat0' | 'exempt'
-  note: string | null
-  kdsStation: string | null
-  categoryId: string | null
-  modifiers: { optionId: string; groupName: string; optionName: string; priceSatang: number; highlight: boolean }[]
-  requirementPerUnit: { ingredientId: string; qtyMilli: number }[]
-}
 
 /**
  * Sales: checkout, void, refund, bill queries.
@@ -109,131 +97,244 @@ export class SaleService {
 
     this.db.transaction(() => {
       const shift = this.shifts.requireOpen()
-      const deviceId = shift.device_id
       const billNo = this.docs.nextBillNo(actor.branchId, this.settings.get('bill.reset_policy'), at)
-      const commissionSatang = input.commissionBp !== null ? percentOfSatang(totals.total, input.commissionBp) : null
-
-      this.repo.insertBill({
-        id: billId,
-        branch_id: actor.branchId,
-        bill_no: billNo,
-        device_id: deviceId,
-        shift_id: shift.id,
-        order_type: input.orderType,
-        channel: input.channel,
-        ext_order_id: input.extOrderId ?? null,
-        status: 'paid',
-        vat_mode: totals.vatMode,
-        subtotal_satang: totals.subtotal,
-        discount_satang: totals.discount,
-        vat_satang: totals.vat,
-        total_satang: totals.total,
-        commission_bp: input.commissionBp,
-        commission_satang: commissionSatang,
-        member_id: priced.member?.id ?? null,
-        promotion_id: priced.promotions[0]?.promotionId ?? null,
-        coupon_id: priced.couponId,
-        points_earned: pointsEarned,
-        points_redeemed: priced.points.redeemed,
-        created_by: actor.userId,
-        created_at: at,
-        paid_at: at,
-        updated_at: at,
-      })
-      this.recordDiscounts(actor, billId, billNo, priced, at)
-      if (priced.member) {
-        if (priced.points.redeemed) {
-          const balance = this.db.prepare('SELECT points_balance FROM members WHERE id = ?').pluck().get(priced.member.id) as number
-          if (balance < priced.points.redeemed) throw new AppError('POINTS_INSUFFICIENT', { balance })
-          this.promo.addPoints(priced.member.id, -priced.points.redeemed, 'redeem', 'bill', billId, null, actor.userId, at, false)
-        }
-        if (pointsEarned) this.promo.addPoints(priced.member.id, pointsEarned, 'earn', 'bill', billId, null, actor.userId, at, true)
-      }
-
-      const stockCtx = { branchId: actor.branchId, userId: actor.userId, deviceId, at }
-      lines.forEach((l, idx) => {
-        const itemId = uuidv7(at)
-        const t = totals.lines[idx]!
-        this.repo.insertItem({
-          id: itemId,
-          bill_id: billId,
-          line_no: idx + 1,
-          product_id: l.productId,
-          size_id: l.sizeId,
-          product_name: l.productName,
-          size_label: l.sizeLabel,
-          qty: l.qty,
-          unit_price_satang: l.unitPriceSatang,
-          discount_satang: t.discount,
-          line_total_satang: t.total,
-          vat_type: l.vatType,
-          // per-unit BOM at the time of sale: void/refund use the ledger rows, never today's recipe
-          bom_snapshot_json: JSON.stringify(l.requirementPerUnit),
-          note: l.note,
-        })
-        for (const m of l.modifiers) {
-          this.repo.insertModifier({
-            id: uuidv7(at),
-            bill_item_id: itemId,
-            option_id: m.optionId,
-            group_name: m.groupName,
-            option_name: m.optionName,
-            price_satang: m.priceSatang,
-            kds_highlight: m.highlight ? 1 : 0,
-          })
-        }
-        for (const n of this.stock.deduct(stockCtx, 'bill_item', itemId, scaleRequirement(l.requirementPerUnit, l.qty))) {
-          shortages.push({ ingredientName: n.ingredientName, baseUnit: n.baseUnit, qtyMilli: n.qtyMilli })
-        }
-        if (l.kdsStation) {
-          this.db
-            .prepare(
-              `INSERT INTO kds_tickets (id, branch_id, bill_id, bill_item_id, station, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 'new', ?, ?)`,
-            )
-            .run(uuidv7(at), actor.branchId, billId, itemId, l.kdsStation, at, at)
-        }
-      })
-
-      this.repo.insertPayment({
-        id: uuidv7(at),
-        bill_id: billId,
-        method: pay.method,
-        amount_satang: totals.total,
-        tendered_satang: tendered,
-        change_satang: change,
-        status: 'confirmed',
-        confirmation_source: 'manual',
-        confirmed_by: actor.userId,
-        confirmed_at: at,
-        reference: 'reference' in pay ? (pay.reference ?? null) : null,
-        created_at: at,
-      })
-
-      const ev = (event: string, data: unknown = {}) =>
-        this.repo.insertEvent({ id: uuidv7(at), bill_id: billId, event, user_id: actor.userId, approved_by: null, reason: null, data_json: JSON.stringify(data), device_id: deviceId, created_at: at })
-      ev('created', { items: lines.length })
-      ev('paid', { method: pay.method, totalSatang: totals.total, tenderedSatang: tendered, changeSatang: change })
-
-      if (pay.method === 'cash') {
-        this.repo.insertCash({
-          id: uuidv7(at),
-          branch_id: actor.branchId,
-          shift_id: shift.id,
-          kind: 'sale',
-          amount_satang: totals.total,
-          ref_type: 'bill',
-          ref_id: billId,
-          reverses_id: null,
-          note: null,
-          user_id: actor.userId,
-          device_id: deviceId,
-          created_at: at,
-        })
-      }
+      shortages.push(...this.persist({ userId: actor.userId, branchId: actor.branchId, billId, billNo, shift, at, order: input, lines, totals, priced, pointsEarned, pay, tendered, change, kds: true }))
     }).immediate()
 
     return { bill: this.detail(billId), shortages }
+  }
+
+  /**
+   * Records a bill a paired Client sold while the Host was down (D36). The Client's prices stand
+   * (the customer paid them); the Host re-checks the arithmetic, the bill number block, the seller
+   * and the shift, then writes it exactly like an online sale — stock is deducted now from the BOM
+   * snapshot taken at the time of sale. Idempotent by bill id.
+   */
+  ingestOffline(deviceId: string, bill: OfflineBill, syncedAt: number): SyncResult {
+    const reject = (reason: string): SyncResult => ({ id: bill.id, status: 'rejected', reason })
+    const existing = this.repo.bill(bill.id)
+    if (existing) return { id: bill.id, status: 'duplicate', billNo: existing.bill_no }
+
+    const device = this.db.prepare(`SELECT branch_id FROM devices WHERE id = ? AND role = 'client'`).get(deviceId) as { branch_id: string } | undefined
+    if (!device) return reject('device')
+    const branchId = device.branch_id
+    const block = this.db
+      .prepare('SELECT id, period, prefix, from_no, to_no FROM bill_number_blocks WHERE id = ? AND device_id = ?')
+      .get(bill.blockId, deviceId) as { id: string; period: string; prefix: string; from_no: number; to_no: number } | undefined
+    if (!block || block.period !== bill.period || bill.seq < block.from_no || bill.seq > block.to_no) return reject('bill_number')
+    const policy = this.settings.get('bill.reset_policy')
+    if (formatBillNo(block.prefix, policy, block.period, bill.seq) !== bill.billNo) return reject('bill_number')
+    if (this.db.prepare('SELECT 1 FROM bills WHERE branch_id = ? AND bill_no = ?').get(branchId, bill.billNo)) return reject('bill_number_taken')
+
+    const seller = this.users.findById(bill.userId)
+    if (!seller || seller.branch_id !== branchId || seller.deleted_at !== null) return reject('user')
+    const shift = this.repo.shift(bill.shiftId)
+    if (!shift || shift.device_id !== deviceId) return reject('shift')
+    if ((bill.orderType === 'delivery') !== (bill.channel !== null)) return reject('channel')
+
+    // the arithmetic must hold with the Client's own prices and promotions
+    const discount = bill.promotions.reduce((s, p) => s + p.discountSatang, 0)
+    const subtotal = bill.lines.reduce((s, l) => s + l.unitPriceSatang * l.qty, 0)
+    if (discount > subtotal) return reject('totals')
+    const totals = computeBillTotals({ lines: bill.lines.map((l) => ({ unitPriceSatang: l.unitPriceSatang, qty: l.qty, vatType: l.vatType })), billDiscountSatang: discount, vatRateBp: bill.vatRateBp })
+    if (totals.total !== bill.totalSatang || totals.total <= 0) return reject('totals')
+    let tendered: number | null = null
+    let change: number | null = null
+    if (bill.payment.method === 'cash') {
+      if (bill.payment.tenderedSatang < totals.total) return reject('payment')
+      tendered = bill.payment.tenderedSatang
+      change = tendered - totals.total
+    }
+    const priced: PricedDiscounts = {
+      subtotal,
+      promotions: bill.promotions.map((p) => ({ ...p, couponId: null })),
+      couponId: null,
+      couponError: null,
+      manual: null,
+      points: { redeemed: 0, amount: 0 },
+      discountSatang: discount,
+      member: null,
+      tierMultMilli: 1000,
+    }
+
+    this.db
+      .transaction(() => {
+        this.persist({
+          userId: seller.id,
+          branchId,
+          billId: bill.id,
+          billNo: bill.billNo,
+          shift,
+          at: bill.createdAt,
+          order: { orderType: bill.orderType, channel: bill.channel, extOrderId: bill.extOrderId, commissionBp: bill.commissionBp },
+          lines: bill.lines,
+          totals,
+          priced,
+          pointsEarned: 0,
+          pay: bill.payment as CheckoutInput['payment'],
+          tendered,
+          change,
+          kds: false, // served already
+          eventData: { offline: true, syncedAt },
+        })
+        this.db.prepare('UPDATE bills SET synced_at = ? WHERE id = ?').run(syncedAt, bill.id)
+        this.db.prepare('UPDATE bill_number_blocks SET used_to = max(ifnull(used_to, 0), ?) WHERE id = ?').run(bill.seq, block.id)
+        if (shift.status !== 'open')
+          this.audit.append({ action: 'sync.late_bill', permission: 'pos:create', userId: seller.id, branchId, deviceId, entity: 'bills', entityId: bill.id, after: { billNo: bill.billNo, shiftId: shift.id, totalSatang: totals.total }, risk: 'high' })
+      })
+      .immediate()
+    return { id: bill.id, status: 'ok', billNo: bill.billNo }
+  }
+
+  /**
+   * Writes a priced, paid bill: bill, discounts, points, items (+BOM snapshot), stock deduction,
+   * KDS tickets, payment, bill events and drawer cash. Must run inside the caller's transaction.
+   * Shared by online checkout and bills a Client sold while the Host was down (D36).
+   */
+  private persist(a: {
+    userId: string
+    branchId: string
+    billId: string
+    billNo: string
+    shift: ShiftRow
+    at: number
+    order: Pick<CheckoutInput, 'orderType' | 'channel' | 'extOrderId' | 'commissionBp'>
+    lines: PricedLine[]
+    totals: BillTotals
+    priced: PricedDiscounts
+    pointsEarned: number
+    pay: CheckoutInput['payment']
+    tendered: number | null
+    change: number | null
+    /** create KDS tickets (not for bills that were already served while offline) */
+    kds: boolean
+    /** extra data on the 'created' bill event */
+    eventData?: Record<string, unknown>
+  }): ShortageNoticeDto[] {
+    const shortages: ShortageNoticeDto[] = []
+    const shift = a.shift
+    const deviceId = shift.device_id
+    const commissionSatang = a.order.commissionBp !== null ? percentOfSatang(a.totals.total, a.order.commissionBp) : null
+
+    this.repo.insertBill({
+      id: a.billId,
+      branch_id: a.branchId,
+      bill_no: a.billNo,
+      device_id: deviceId,
+      shift_id: shift.id,
+      order_type: a.order.orderType,
+      channel: a.order.channel,
+      ext_order_id: a.order.extOrderId ?? null,
+      status: 'paid',
+      vat_mode: a.totals.vatMode,
+      subtotal_satang: a.totals.subtotal,
+      discount_satang: a.totals.discount,
+      vat_satang: a.totals.vat,
+      total_satang: a.totals.total,
+      commission_bp: a.order.commissionBp,
+      commission_satang: commissionSatang,
+      member_id: a.priced.member?.id ?? null,
+      promotion_id: a.priced.promotions[0]?.promotionId ?? null,
+      coupon_id: a.priced.couponId,
+      points_earned: a.pointsEarned,
+      points_redeemed: a.priced.points.redeemed,
+      created_by: a.userId,
+      created_at: a.at,
+      paid_at: a.at,
+      updated_at: a.at,
+    })
+    this.recordDiscounts(a, a.billId, a.billNo, a.priced, a.at)
+    if (a.priced.member) {
+      if (a.priced.points.redeemed) {
+        const balance = this.db.prepare('SELECT points_balance FROM members WHERE id = ?').pluck().get(a.priced.member.id) as number
+        if (balance < a.priced.points.redeemed) throw new AppError('POINTS_INSUFFICIENT', { balance })
+        this.promo.addPoints(a.priced.member.id, -a.priced.points.redeemed, 'redeem', 'bill', a.billId, null, a.userId, a.at, false)
+      }
+      if (a.pointsEarned) this.promo.addPoints(a.priced.member.id, a.pointsEarned, 'earn', 'bill', a.billId, null, a.userId, a.at, true)
+    }
+
+    const stockCtx = { branchId: a.branchId, userId: a.userId, deviceId, at: a.at }
+    a.lines.forEach((l, idx) => {
+      const itemId = uuidv7(a.at)
+      const t = a.totals.lines[idx]!
+      this.repo.insertItem({
+        id: itemId,
+        bill_id: a.billId,
+        line_no: idx + 1,
+        product_id: l.productId,
+        size_id: l.sizeId,
+        product_name: l.productName,
+        size_label: l.sizeLabel,
+        qty: l.qty,
+        unit_price_satang: l.unitPriceSatang,
+        discount_satang: t.discount,
+        line_total_satang: t.total,
+        vat_type: l.vatType,
+        // per-unit BOM at the time of sale: void/refund use the ledger rows, never today's recipe
+        bom_snapshot_json: JSON.stringify(l.requirementPerUnit),
+        note: l.note,
+      })
+      for (const m of l.modifiers) {
+        this.repo.insertModifier({
+          id: uuidv7(a.at),
+          bill_item_id: itemId,
+          option_id: m.optionId,
+          group_name: m.groupName,
+          option_name: m.optionName,
+          price_satang: m.priceSatang,
+          kds_highlight: m.highlight ? 1 : 0,
+        })
+      }
+      for (const n of this.stock.deduct(stockCtx, 'bill_item', itemId, scaleRequirement(l.requirementPerUnit, l.qty))) {
+        shortages.push({ ingredientName: n.ingredientName, baseUnit: n.baseUnit, qtyMilli: n.qtyMilli })
+      }
+      if (a.kds && l.kdsStation) {
+        this.db
+          .prepare(
+            `INSERT INTO kds_tickets (id, branch_id, bill_id, bill_item_id, station, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'new', ?, ?)`,
+          )
+          .run(uuidv7(a.at), a.branchId, a.billId, itemId, l.kdsStation, a.at, a.at)
+      }
+    })
+
+    this.repo.insertPayment({
+      id: uuidv7(a.at),
+      bill_id: a.billId,
+      method: a.pay.method,
+      amount_satang: a.totals.total,
+      tendered_satang: a.tendered,
+      change_satang: a.change,
+      status: 'confirmed',
+      confirmation_source: 'manual',
+      confirmed_by: a.userId,
+      confirmed_at: a.at,
+      reference: 'reference' in a.pay ? (a.pay.reference ?? null) : null,
+      created_at: a.at,
+    })
+
+    const ev = (event: string, data: unknown = {}) =>
+      this.repo.insertEvent({ id: uuidv7(a.at), bill_id: a.billId, event, user_id: a.userId, approved_by: null, reason: null, data_json: JSON.stringify(data), device_id: deviceId, created_at: a.at })
+    ev('created', { items: a.lines.length, ...a.eventData })
+    ev('paid', { method: a.pay.method, totalSatang: a.totals.total, tenderedSatang: a.tendered, changeSatang: a.change })
+
+    if (a.pay.method === 'cash') {
+      this.repo.insertCash({
+        id: uuidv7(a.at),
+        branch_id: a.branchId,
+        shift_id: shift.id,
+        kind: 'sale',
+        amount_satang: a.totals.total,
+        ref_type: 'bill',
+        ref_id: a.billId,
+        reverses_id: null,
+        note: null,
+        user_id: a.userId,
+        device_id: deviceId,
+        created_at: a.at,
+      })
+    }
+    return shortages
   }
 
   /** Price preview for the POS (no approver PIN check, nothing written). */
@@ -260,7 +361,7 @@ export class SaleService {
   }
 
   /** One bill_discounts row per discount; the manual one is audited (CLAUDE.md rule 4). */
-  private recordDiscounts(actor: Actor, billId: string, billNo: string, p: PricedDiscounts, at: number) {
+  private recordDiscounts(actor: Pick<Actor, 'userId' | 'branchId'>, billId: string, billNo: string, p: PricedDiscounts, at: number) {
     const ins = this.db.prepare(
       `INSERT INTO bill_discounts (id, bill_id, kind, promotion_id, coupon_id, description, amount_satang, points, approved_by, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -284,45 +385,9 @@ export class SaleService {
     if (p.points.redeemed) ins.run(uuidv7(at), billId, 'points', null, null, `แลก ${p.points.redeemed} แต้ม`, p.points.amount, p.points.redeemed, null, at)
   }
 
-  /** Prices one cart line from the DB and computes its per-unit BOM. */
+  /** Prices one cart line from the DB (same rules a Client uses offline: shared/pricing.ts). */
   private price(branchId: string, item: CheckoutInput['items'][number]): PricedLine {
-    const p = this.catalog.saleable(branchId, item.productId)
-    if (!p) throw new AppError('PRODUCT_UNAVAILABLE', { productId: item.productId })
-    const size = item.sizeId ? p.sizes.find((s) => s.id === item.sizeId) : (p.sizes.find((s) => s.isDefault) ?? p.sizes[0])
-    if (item.sizeId && !size) throw new AppError('PRODUCT_UNAVAILABLE', { sizeId: item.sizeId })
-    if (!size) throw new AppError('PRODUCT_UNAVAILABLE', { productId: item.productId })
-
-    const chosen = new Set(item.optionIds)
-    if (chosen.size !== item.optionIds.length) throw new AppError('INVALID_MODIFIERS')
-    const modifiers: PricedLine['modifiers'] = []
-    const modBoms = []
-    let found = 0
-    for (const g of p.groups) {
-      const picked = g.options.filter((o) => chosen.has(o.id))
-      if (picked.length < g.min_select || picked.length > g.max_select) throw new AppError('INVALID_MODIFIERS', { group: g.name })
-      for (const o of picked) {
-        modifiers.push({ optionId: o.id, groupName: g.name, optionName: o.name, priceSatang: o.priceSatang, highlight: g.kds_highlight === 1 })
-        modBoms.push(o.items)
-        found++
-      }
-    }
-    if (found !== chosen.size) throw new AppError('INVALID_MODIFIERS') // option not offered for this product
-
-    const category = p.product.category_id ? this.catalog.repo.category(p.product.category_id) : undefined
-    return {
-      productId: p.product.id,
-      sizeId: size.id,
-      productName: p.product.name,
-      sizeLabel: p.sizes.length > 1 ? size.label : null,
-      qty: item.qty,
-      unitPriceSatang: size.priceSatang + modifiers.reduce((s, m) => s + m.priceSatang, 0),
-      vatType: p.product.vat_type,
-      note: item.note ?? null,
-      kdsStation: p.product.kind === 'retail' ? null : (category?.kds_station ?? 'bar'),
-      categoryId: p.product.category_id,
-      modifiers,
-      requirementPerUnit: requirementPerUnit(p.recipe, { id: size.id, multiplierMilli: size.multiplierMilli }, modBoms),
-    }
+    return priceLine(this.catalog.saleSnapshot(branchId, item.productId), item)
   }
 
   // -------------------------------------------------------------------------

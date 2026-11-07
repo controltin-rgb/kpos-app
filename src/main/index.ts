@@ -1,15 +1,23 @@
-import { writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, safeStorage, screen, shell } from 'electron'
 import { createAppContext, type AppContext } from '@main/app-context'
 import { loadOrCreateSecret } from '@main/auth/secret'
 import type { Db } from '@main/db/connection'
 import { initDatabase, resolveDbPaths } from '@main/db'
-import { MigrationError } from '@main/db/migrate'
+import { migrate, MigrationError } from '@main/db/migrate'
+import { openDatabase } from '@main/db/connection'
+import { ClientStore } from '@main/sync/client-store'
 import { thMain } from '@main/i18n/th'
 import { registerIpc } from '@main/ipc'
-import { loadOrCreateDevice } from '@main/local-device'
+import { loadOrCreateDevice, saveDeviceRole } from '@main/local-device'
+import { createClientContext, type ClientContext } from '@main/lan/client-context'
+import { HostConnection, type HostConfig } from '@main/lan/host-connection'
+import { clearHostConfig, loadHostConfig, saveHostConfig, type SecretBox } from '@main/lan/host-store'
+import type { LocalDevice } from '@main/services/device.service'
 import { printHtml } from '@main/print/electron-printer'
+import { applyPendingRestore, type PendingRestoreResult } from '@main/backup/backup.service'
+import { machineFingerprint } from '@main/license/hardware-id'
 import { EVENT_CHANNEL } from '@shared/api'
 
 const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
@@ -64,8 +72,8 @@ function createMainWindow(route = '', bounds?: Electron.Rectangle, fullscreen = 
 
 const extraWindows = new Map<'kds' | 'cfd', BrowserWindow>()
 
-/** Opens (or focuses) the KDS / CFD window. KDS shares the caller's session; CFD needs none. */
-function openSecondaryWindow(ctx: AppContext, kind: 'kds' | 'cfd', senderId: number): void {
+/** Opens (or focuses) the KDS / CFD window. KDS shares the caller's session (shareSession); CFD needs none. */
+function openSecondaryWindow(kind: 'kds' | 'cfd', senderId: number, shareSession: (child: number, parent: number) => void): void {
   const existing = extraWindows.get(kind)
   if (existing && !existing.isDestroyed()) {
     existing.focus()
@@ -75,10 +83,89 @@ function openSecondaryWindow(ctx: AppContext, kind: 'kds' | 'cfd', senderId: num
   const displays = screen.getAllDisplays()
   const external = displays.find((d) => d.id !== screen.getPrimaryDisplay().id)
   const win = kind === 'cfd' && external ? createMainWindow('#/cfd', external.bounds, true) : createMainWindow(`#/${kind}`)
-  const token = ctx.sessions.get(senderId)
-  if (kind === 'kds' && token) ctx.sessions.set(win.webContents.id, token)
+  if (kind === 'kds') shareSession(win.webContents.id, senderId)
   extraWindows.set(kind, win)
   win.on('closed', () => extraWindows.delete(kind))
+}
+
+const relaunch = () => {
+  app.relaunch()
+  app.quit()
+}
+
+/** OS-backed encryption for the Client's device token (DPAPI on Windows, Keychain on macOS). */
+const secretBox = async (): Promise<SecretBox | null> =>
+  (await safeStorage.isAsyncEncryptionAvailable())
+    ? { encrypt: (s) => safeStorage.encryptStringAsync(s), decrypt: async (b) => (await safeStorage.decryptStringAsync(b)).result }
+    : null
+
+/** Native helpers shared by the Host/Standalone and Client contexts — they act on THIS machine. */
+const native = {
+  printHtml,
+  saveFile: async (defaultName: string, content: string) => {
+    const r = await dialog.showSaveDialog({ defaultPath: join(app.getPath('documents'), defaultName) })
+    if (r.canceled || !r.filePath) return null
+    await writeFile(r.filePath, content, 'utf8')
+    return r.filePath
+  },
+  pickFile: async () => {
+    const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Receipt', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
+    return r.canceled ? null : (r.filePaths[0] ?? null)
+  },
+  pickLicenseFile: async () => {
+    const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'KPOSS License', extensions: ['LIC', 'lic'] }] })
+    const file = r.canceled ? null : r.filePaths[0]
+    if (!file) return null
+    // a .LIC is a few hundred bytes; refuse anything large before reading it
+    if ((await stat(file)).size > 16_000) return ''
+    return readFile(file, 'utf8')
+  },
+}
+
+const versions = () => ({ app: app.getVersion(), electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome, platform: process.platform })
+
+/** Push AppEvents (KDS updates, customer display, shift changes, LAN state) to every window. */
+function forwardEvents(events: NodeJS.EventEmitter) {
+  events.on('event', (e) => {
+    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(EVENT_CHANNEL, e)
+  })
+}
+
+/** Client mode (D33): no database on this machine — everything goes to the paired Host. */
+function startClient(device: LocalDevice, cfg: HostConfig, deviceFile: string) {
+  const userData = app.getPath('userData')
+  // the Client's own small DB: offline snapshot, reserved bill numbers, bills waiting for the Host (D36)
+  const storePath = join(userData, 'data', 'client.sqlite')
+  let store: ClientStore | undefined
+  try {
+    const local = openDatabase(storePath)
+    migrate(local, {
+      dbPath: storePath,
+      migrationsDir: app.isPackaged ? join(process.resourcesPath, 'migrations-client') : join(app.getAppPath(), 'migrations-client'),
+      backupDir: join(userData, 'backup'),
+    })
+    db = local
+    store = new ClientStore(local)
+  } catch (err) {
+    console.error('[sync] offline store unavailable — online only:', err)
+  }
+  const ctx: ClientContext = createClientContext({
+    conn: new HostConnection(cfg),
+    device,
+    ...(store ? { store } : {}),
+    versions: versions(),
+    ...native,
+    openWindow: (kind, senderId) => openSecondaryWindow(kind, senderId, ctx.aliasWindow),
+    unpair: () => {
+      clearHostConfig(userData)
+      saveDeviceRole(deviceFile, 'standalone')
+      relaunch()
+    },
+    log: (m, e) => console.error(m, e),
+  })
+  registerIpc(ctx, isTrustedUrl)
+  forwardEvents(ctx.events)
+  createMainWindow()
 }
 
 function showDbErrorAndQuit(err: unknown, dbPath: string): void {
@@ -96,18 +183,39 @@ function showDbErrorAndQuit(err: unknown, dbPath: string): void {
   app.exit(1)
 }
 
-app.whenReady().then(() => {
-  const paths = resolveDbPaths({
-    userData: app.getPath('userData'),
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    appPath: app.getAppPath(),
-  })
+app.whenReady().then(async () => {
+  const userData = app.getPath('userData')
+  const deviceFile = join(userData, 'device.json')
+  const device = loadOrCreateDevice(deviceFile)
+
+  if (device.role === 'client') {
+    const cfg = await loadHostConfig(userData, await secretBox())
+    if (cfg) {
+      startClient(device, cfg, deviceFile)
+      return
+    }
+    // pairing data missing or unreadable: start over as a fresh install
+    console.error('[lan] host config missing — back to standalone')
+    device.role = 'standalone'
+    saveDeviceRole(deviceFile, 'standalone')
+  }
+
+  const paths = resolveDbPaths({ userData, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appPath: app.getAppPath() })
+  // a restore staged from the Backup page is swapped in before the DB is opened
+  let restore: PendingRestoreResult | null = null
+  try {
+    restore = applyPendingRestore(paths.dbPath)
+    if (restore) console.info('[backup] staged restore:', restore.status)
+  } catch (err) {
+    console.error('[backup] applying staged restore failed:', err)
+  }
+  let preMigrateBackup: string | null
   try {
     const result = initDatabase(paths)
     db = result.db
     const m = result.migration
     if (m.applied.length) console.info(`[db] migrated v${m.from} → v${m.to}`, m.backupPath ?? '')
+    preMigrateBackup = m.backupPath
   } catch (err) {
     showDbErrorAndQuit(err, paths.dbPath)
     return
@@ -115,34 +223,49 @@ app.whenReady().then(() => {
 
   const ctx: AppContext = createAppContext({
     db,
-    device: loadOrCreateDevice(join(app.getPath('userData'), 'device.json')),
-    printHtml,
-    receiptsDir: join(app.getPath('userData'), 'receipts'),
-    saveFile: async (defaultName, content) => {
-      const r = await dialog.showSaveDialog({ defaultPath: join(app.getPath('documents'), defaultName) })
-      if (r.canceled || !r.filePath) return null
-      await writeFile(r.filePath, content, 'utf8')
-      return r.filePath
-    },
-    pickFile: async () => {
-      const r = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'Receipt', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] })
+    device,
+    ...native,
+    receiptsDir: join(userData, 'receipts'),
+    openWindow: (kind, senderId) =>
+      openSecondaryWindow(kind, senderId, (child, parent) => {
+        const token = ctx.sessions.get(parent)
+        if (token) ctx.sessions.set(child, token)
+      }),
+    backupPaths: { dbPath: paths.dbPath, backupDir: paths.backupDir },
+    pickFolder: async () => {
+      const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
       return r.canceled ? null : (r.filePaths[0] ?? null)
     },
-    openWindow: (kind, senderId) => openSecondaryWindow(ctx, kind, senderId),
-    authSecret: loadOrCreateSecret(join(app.getPath('userData'), 'secrets', 'auth.key')),
-    versions: {
-      app: app.getVersion(),
-      electron: process.versions.electron,
-      node: process.versions.node,
-      chrome: process.versions.chrome,
-      platform: process.platform,
+    hardwareId: machineFingerprint(),
+    relaunch,
+    lan: {
+      certDir: join(userData, 'secrets'),
+      saveRole: (role) => saveDeviceRole(deviceFile, role),
+      becomeClient: (cfg, deviceName) =>
+        void (async () => {
+          await saveHostConfig(userData, cfg, await secretBox())
+          saveDeviceRole(deviceFile, 'client', deviceName)
+          relaunch()
+        })(),
+      log: (m, e) => console.error(m, e),
     },
+    authSecret: loadOrCreateSecret(join(userData, 'secrets', 'auth.key')),
+    versions: versions(),
   })
   registerIpc(ctx, isTrustedUrl)
-  // push AppEvents (KDS updates, customer display, shift changes) to every window
-  ctx.events.on('event', (e) => {
-    for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(EVENT_CHANNEL, e)
-  })
+  try {
+    if (preMigrateBackup) ctx.backup.registerExisting(preMigrateBackup, 'pre_migrate')
+    ctx.backup.completeRestore(restore)
+  } catch (err) {
+    console.error('[backup] startup bookkeeping failed:', err)
+  }
+  // D25: daily snapshot — checked every minute; a snapshot missed while the app was closed runs soon after start
+  const backupTick = () => void ctx.backup.runDueSnapshot()
+  setTimeout(backupTick, 30_000)
+  setInterval(backupTick, 60_000).unref()
+  // Host: open the LAN API for paired Clients (D33)
+  void ctx.lan.startIfHost()
+  forwardEvents(ctx.events)
   createMainWindow()
 
   app.on('activate', () => {
@@ -155,6 +278,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  // (the Host LAN server dies with the process; nothing to flush)
   db?.close()
   db = null
 })

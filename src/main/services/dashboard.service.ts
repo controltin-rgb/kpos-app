@@ -38,6 +38,7 @@ export class DashboardService {
     private readonly shifts: ShiftService,
     private readonly stock: StockService,
     private readonly now: () => number = Date.now,
+    private readonly licenseDaysLeft: () => number | null = () => null,
   ) {}
 
   summary(actor: Actor, period: DashboardPeriod): DashboardDto {
@@ -113,7 +114,7 @@ export class DashboardService {
       pending: {
         counts: this.db.prepare(`SELECT count(*) FROM stock_counts WHERE branch_id = ? AND status = 'pending'`).pluck().get(actor.branchId) as number,
         voids: 0,
-        licenseDaysLeft: null,
+        licenseDaysLeft: this.licenseDaysLeft(),
         lastBackupAt: (this.db.prepare('SELECT max(finished_at) FROM backup_runs WHERE ok = 1').pluck().get() as number | null) ?? null,
       },
     }

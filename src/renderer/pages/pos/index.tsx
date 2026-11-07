@@ -4,6 +4,7 @@ import type { DeliveryChannel, OrderType, PosCatalog, SaleResult, ShiftSummaryDt
 import { uuidv7 } from '@shared/id'
 import { percentOfSatang } from '@shared/money'
 import { computeBillTotals } from '@shared/sale-totals'
+import { ConnectionChip } from '@renderer/components/connection-chip'
 import { Icon } from '@renderer/components/icons'
 import { Segmented } from '@renderer/components/modal'
 import { GRADIENTS, inputClass, SelectInput, useToast } from '@renderer/components/ui'
@@ -297,10 +298,7 @@ export function PosPage() {
           <span className="text-xs text-muted-foreground">{p.subtitle(catalog?.branchName ?? user?.branchName ?? '', catalog?.device.name ?? '')}</span>
         </div>
         <div className="flex-1" />
-        <span className="inline-flex h-[38px] items-center gap-2 rounded-[19px] bg-success px-3.5 text-[13px] font-semibold text-success-foreground">
-          <span className="inline-block size-2 rounded-full bg-[#1BA56B]" />
-          {t.common.online}
-        </span>
+        <ConnectionChip compact />
         <span className={cn('inline-flex h-[38px] items-center gap-2 rounded-[19px] px-3.5 text-[13px] font-semibold', shift ? 'bg-accent text-accent-foreground' : 'bg-warning text-warning-foreground')}>
           {shift ? p.shiftOpen(shift.openedByName) : p.shiftClosed}
         </span>

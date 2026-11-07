@@ -1,5 +1,5 @@
 {
-  // Editor-only umbrella config. `npm run typecheck` checks node and web code separately
+  // Editor-only umbrella config. `pnpm typecheck` checks node and web code separately
   // (tsconfig.node.json / tsconfig.web.json) so renderer code cannot use Node types.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {

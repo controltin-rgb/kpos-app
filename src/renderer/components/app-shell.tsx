@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { LicenseBanner } from './license-banner'
+import { ConnectionChip } from './connection-chip'
 import type { NotificationDto } from '@shared/api-dashboard'
 import { call } from '@renderer/lib/api'
 import { useAppEvent, useNow } from '@renderer/lib/events'
@@ -23,7 +25,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       {navOpen && <Sidebar pathname={pathname} />}
       <div className="flex min-w-0 flex-[999_1_560px] flex-col">
         <Header onToggleNav={() => setNavOpen((v) => !v)} title={crumb?.breadcrumb ?? crumb?.label ?? ''} />
-        <main className="flex flex-col gap-[18px] px-7 pt-2 pb-8">{children}</main>
+        <main className="flex flex-col gap-[18px] px-7 pt-2 pb-8">
+          <LicenseBanner />
+          {children}
+        </main>
       </div>
     </div>
   )
@@ -279,10 +284,7 @@ function Header({ onToggleNav, title }: { onToggleNav: () => void; title: string
       </button>
       <div className="text-[15px] text-[#4A5060]">{title}</div>
       <div className="flex-1" />
-      <div className="inline-flex h-[38px] items-center gap-2 rounded-[19px] bg-success px-3.5 text-[13px] font-semibold text-success-foreground">
-        <span className="inline-block size-2 rounded-full bg-[#1BA56B]" />
-        {t.common.syncPending(0)}
-      </div>
+      <ConnectionChip />
       <div role="group" aria-label={h.theme} className="inline-flex rounded-[22px] bg-white p-[3px] shadow-[0_1px_3px_rgba(40,30,60,0.1)]">
         {themeBtn('light', h.themeLight, 'sun')}
         {themeBtn('auto', h.themeAuto, 'monitor')}

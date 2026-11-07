@@ -2,7 +2,9 @@ import { useState, type FormEvent } from 'react'
 import { t } from '@renderer/i18n'
 import { call, errorMessage, fieldErrors } from '@renderer/lib/api'
 import { useSession } from '@renderer/lib/session'
+import { Segmented } from '@renderer/components/modal'
 import { AuthInput, AuthLayout, AuthSubmit, AuthTitle, FormError } from './auth-layout'
+import { JoinHostForm } from './lan'
 
 /** First-run setup (no prototype yet — follows the Login card style). */
 export function SetupPage() {
@@ -16,6 +18,7 @@ export function SetupPage() {
     confirm: '',
   })
   const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<'new' | 'join'>('new')
   const [error, setError] = useState<string | null>(null)
   const [fields, setFields] = useState<Record<string, string>>({})
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }))
@@ -45,8 +48,17 @@ export function SetupPage() {
   const s = t.setup
   return (
     <AuthLayout>
-      <AuthTitle title={s.title} subtitle={s.subtitle} />
-      <form onSubmit={submit} className="flex flex-col gap-3.5">
+      <AuthTitle title={mode === 'join' ? t.lan.joinTitle : s.title} subtitle={mode === 'join' ? t.lan.joinSubtitle : s.subtitle} />
+      <Segmented
+        label={s.title}
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: 'new', label: t.lan.setupNewShop },
+          { value: 'join', label: t.lan.setupJoin },
+        ]}
+      />
+      {mode === 'join' ? <JoinHostForm /> : <form onSubmit={submit} className="flex flex-col gap-3.5">
         <AuthInput id="shop" label={s.shopName} icon="home" value={form.shopName} onChange={set('shopName')} error={fields['shopName']} autoFocus required />
         <AuthInput id="branch" label={s.branchName} icon="home" value={form.branchName} onChange={set('branchName')} error={fields['branchName']} required />
         <AuthInput id="dn" label={s.displayName} icon="user" value={form.displayName} onChange={set('displayName')} error={fields['displayName']} required />
@@ -86,7 +98,7 @@ export function SetupPage() {
         />
         <FormError message={error} />
         <AuthSubmit busy={busy}>{busy ? t.common.saving : s.submit}</AuthSubmit>
-      </form>
+      </form>}
     </AuthLayout>
   )
 }

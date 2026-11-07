@@ -1,4 +1,5 @@
 import type { Actor } from '@main/auth/actor'
+import type { SaleableSnapshot } from '@shared/pricing'
 import type { Db } from '@main/db/connection'
 import { CatalogRepo, type GroupRow, type ProductRow } from '@main/db/repos/catalog.repo'
 import { StockRepo } from '@main/db/repos/stock.repo'
@@ -82,7 +83,7 @@ export class CatalogService {
 
   // ---- products -----------------------------------------------------------
 
-  products(actor: Actor, vatRateBp = 0): ProductDto[] {
+  products(actor: Pick<Actor, 'branchId'>, vatRateBp = 0): ProductDto[] {
     const products = this.repo.products(actor.branchId)
     const ids = products.map((p) => p.id)
     const sizes = this.repo.sizesForProducts(ids)
@@ -194,7 +195,7 @@ export class CatalogService {
 
   // ---- modifier groups ----------------------------------------------------
 
-  groups(actor: Actor): ModifierGroupDto[] {
+  groups(actor: Pick<Actor, 'branchId'>): ModifierGroupDto[] {
     const groups = this.repo.groups(actor.branchId)
     const options = this.repo.options(groups.map((g) => g.id))
     const items = this.repo.optionItems(options.map((o) => o.id))
@@ -266,7 +267,7 @@ export class CatalogService {
 
   // ---- POS ----------------------------------------------------------------
 
-  posCatalog(actor: Actor): Omit<PosCatalog, 'vatRateBp' | 'promptPayId' | 'device' | 'branchName'> {
+  posCatalog(actor: Pick<Actor, 'branchId'>): Omit<PosCatalog, 'vatRateBp' | 'promptPayId' | 'device' | 'branchName'> {
     const products = this.products(actor).filter((p) => p.active)
     const stockOut = new Set(
       this.stock
@@ -328,6 +329,30 @@ export class CatalogService {
           })),
       })),
     }
+  }
+
+  /** Plain-JSON pricing data of one product (shared/pricing.ts) — also copied to Clients for offline sales. */
+  saleSnapshot(branchId: string, productId: string): SaleableSnapshot | null {
+    const p = this.saleable(branchId, productId)
+    if (!p) return null
+    const category = p.product.category_id ? this.repo.category(p.product.category_id) : undefined
+    return {
+      id: p.product.id,
+      name: p.product.name,
+      categoryId: p.product.category_id,
+      kind: p.product.kind,
+      vatType: p.product.vat_type,
+      kdsStation: p.product.kind === 'retail' ? null : (category?.kds_station ?? 'bar'),
+      sizes: p.sizes.map((x) => ({ id: x.id, label: x.label, priceSatang: x.priceSatang, multiplierMilli: x.multiplierMilli, isDefault: x.isDefault })),
+      recipe: p.recipe,
+      groups: p.groups.map((g) => ({ id: g.id, name: g.name, minSelect: g.min_select, maxSelect: g.max_select, kdsHighlight: g.kds_highlight === 1, options: g.options })),
+    }
+  }
+
+  /** Every active product of the branch as snapshots (Client offline copy, D36). */
+  saleSnapshots(branchId: string): SaleableSnapshot[] {
+    const ids = this.db.prepare('SELECT id FROM products WHERE branch_id = ? AND active = 1 AND deleted_at IS NULL').pluck().all(branchId) as string[]
+    return ids.map((id) => this.saleSnapshot(branchId, id)).filter((x): x is SaleableSnapshot => x !== null)
   }
 
   // -------------------------------------------------------------------------

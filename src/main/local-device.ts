@@ -22,3 +22,9 @@ export function loadOrCreateDevice(file: string): LocalDevice {
   writeFileSync(file, JSON.stringify(device, null, 2))
   return device
 }
+
+/** Persists a role change (Standalone ⇄ Host, or Client after pairing — with the name it was paired under). */
+export function saveDeviceRole(file: string, role: LocalDevice['role'], name?: string): void {
+  const d = loadOrCreateDevice(file)
+  writeFileSync(file, JSON.stringify({ ...d, role, ...(name ? { name } : {}) }, null, 2))
+}

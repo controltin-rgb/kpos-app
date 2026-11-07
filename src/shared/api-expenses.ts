@@ -76,6 +76,11 @@ export const expensesApi = {
   'expenses.summary': ep<ExpenseSummaryDto>()('expenses:view', z.object({ from: z.number().int(), to: z.number().int() })),
   /** Opens a file picker in main, copies the image into userData/receipts and returns the stored file name. */
   'expenses.pickReceipt': ep<string | null>()('expenses:create', z.undefined()),
+  /** A LAN Client picks the image on its own machine and uploads it (≤ 5 MB). */
+  'expenses.uploadReceipt': ep<string>()(
+    'expenses:create',
+    z.object({ ext: z.enum(['.jpg', '.jpeg', '.png', '.webp']), dataBase64: z.string().max(7_000_000) }),
+  ),
   /** Receipt image as a data URL (read from userData/receipts only). */
   'expenses.receipt': ep<string | null>()('expenses:view', z.object({ id })),
 } as const

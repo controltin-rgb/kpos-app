@@ -29,6 +29,8 @@ export class UsersService {
     private readonly authService: AuthService,
     private readonly audit: AuditService,
     private readonly now: () => number = Date.now,
+    /** employee cap from the license (D13/D29); falls back to the setting / default 10 */
+    private readonly cap?: () => number,
   ) {
     this.users = new UsersRepo(db)
     this.roles = new RolesRepo(db)
@@ -36,6 +38,7 @@ export class UsersService {
   }
 
   employeeCap(branchId: string): number {
+    if (this.cap) return this.cap()
     return this.org.getSetting<number>('license.employee_cap', branchId) ?? DEFAULT_EMPLOYEE_CAP
   }
 

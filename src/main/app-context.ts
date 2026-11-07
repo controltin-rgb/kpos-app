@@ -31,6 +31,14 @@ import { buildPromptPayPayload } from '@shared/promptpay'
 import type { AppEvent } from '@shared/api'
 import type { CfdState } from '@shared/api-sales'
 import { renderZReport } from '@main/print/z-report'
+import { remoteScope } from '@main/request-scope'
+import { LanManager, type LanManagerOptions } from '@main/lan/lan-manager'
+import { SyncHostService } from '@main/sync/sync-host.service'
+import { BackupService, type BackupPaths } from '@main/backup/backup.service'
+import { AuditQueryService } from '@main/services/audit-query.service'
+import { LicenseService } from '@main/license/license.service'
+import { LICENSE_PUBLIC_KEYS } from '@main/license/public-key'
+import { READ_ONLY_BLOCKED_CHANNELS } from '@shared/license'
 
 export interface AppContextOptions {
   db: Db
@@ -50,6 +58,20 @@ export interface AppContextOptions {
   receiptsDir?: string
   /** native file picker for receipt images; returns an absolute path or null */
   pickFile?: () => Promise<string | null>
+  /** DB file + backup folder; null/absent when this process does not own a DB file (tests in memory, Client mode) */
+  backupPaths?: BackupPaths | null
+  /** native folder picker for the off-site backup folder */
+  pickFolder?: () => Promise<string | null>
+  /** restarts the app (used to swap in a restored database before it is opened) */
+  relaunch?: () => void
+  /** this machine's Hardware ID for licensing (Electron: machineFingerprint()) */
+  hardwareId?: string
+  /** trusted license public keys (default: the embedded ones) */
+  licensePublicKeys?: readonly string[]
+  /** native dialog to pick a .LIC; returns its text */
+  pickLicenseFile?: () => Promise<string | null>
+  /** Host/Client networking (D33); absent → this machine stays Standalone */
+  lan?: Omit<LanManagerOptions, 'appVersion'>
 }
 
 export type { AppEvent } from '@shared/api'
@@ -61,10 +83,16 @@ export function createAppContext(opts: AppContextOptions) {
   seedSystemRoles(db, now())
 
   const audit = new AuditService(db, now)
+  const license = new LicenseService(db, audit, {
+    hardwareId: opts.hardwareId ?? 'HW-0000-0000-0000-0000',
+    publicKeys: opts.licensePublicKeys ?? LICENSE_PUBLIC_KEYS,
+    now,
+    ...(opts.pickLicenseFile ? { pickFile: opts.pickLicenseFile } : {}),
+  })
   const auth = createAuth(db, opts.authSecret)
   const authService = new AuthService(db, auth, audit, now)
   const setup = new SetupService(db, authService, audit, now)
-  const users = new UsersService(db, authService, audit, now)
+  const users = new UsersService(db, authService, audit, now, () => license.employeeCap())
   const roles = new RolesService(db, audit, now)
   const sessions = new SessionRegistry()
   const events = new EventEmitter()
@@ -72,6 +100,7 @@ export function createAppContext(opts: AppContextOptions) {
   let lastCfd: CfdState | null = null
 
   const device = new DeviceService(db, opts.device ?? { id: '00000000-0000-7000-8000-000000000001', name: 'POS-01', hardwareId: 'test', role: 'standalone' }, now)
+  audit.setDeviceProvider(() => device.auditDeviceId())
   const docs = new DocNumberService(db)
   const settings = new SettingsService(db, audit, now)
   const stock = new StockService(db)
@@ -85,11 +114,39 @@ export function createAppContext(opts: AppContextOptions) {
   const stockOps = new StockOpsService(db, stock, catalog, shifts, docs, settings, audit, (b) => device.ensure(b), now)
   const org = new OrgRepo(db)
   const reports = new ReportService(db, sales, shifts, stockOps, expenses, docs, settings, audit, now)
-  const dashboard = new DashboardService(db, reports, shifts, stock, now)
+  const dashboard = new DashboardService(db, reports, shifts, stock, now, () => license.status().daysLeft)
+  const backup = new BackupService(db, audit, settings, { paths: opts.backupPaths ?? null, now, cloudLicensed: () => license.status().features.cloudBackup, ...(opts.pickFolder ? { pickFolder: opts.pickFolder } : {}) })
+  const auditQuery = new AuditQueryService(db, now)
+  const syncHost = new SyncHostService(db, catalog, promo, settings, docs, sales, audit, now)
+  const lan = new LanManager(
+    {
+      db,
+      audit,
+      settings,
+      license,
+      device,
+      events,
+      sessions,
+      now,
+      sync: {
+        snapshot: (deviceId) => syncHost.snapshot(deviceId),
+        ingest: (deviceId, bills) => syncHost.ingest(deviceId, bills),
+        changed: () => (emit({ type: 'shift.changed' }), emit({ type: 'kds.changed' })),
+      },
+      setupRequired: () => setup.status().setupRequired, dispatch: (sender, ch, input) => dispatch(sender, ch, input) },
+    { certDir: null, appVersion: opts.versions?.app ?? '0.0.0', ...opts.lan },
+  )
   const printHtml = opts.printHtml ?? (async () => {})
   const print = async (html: string, a4 = false) => {
+    const paperMm = a4 ? 210 : settings.get('receipt.paper_mm')
+    // a LAN Client prints on its own printer: hand the document back with the reply (D33)
+    const scope = remoteScope()
+    if (scope) {
+      scope.effects.push({ kind: 'print', html, paperMm })
+      return
+    }
     try {
-      await printHtml(html, { paperMm: a4 ? 210 : settings.get('receipt.paper_mm') })
+      await printHtml(html, { paperMm })
     } catch (err) {
       throw new AppError('PRINT_FAILED', { message: String(err) })
     }
@@ -101,7 +158,7 @@ export function createAppContext(opts: AppContextOptions) {
     const branch = org.firstBranch()
     const code = branch ? docs.branchCode(branch.id) : 'A'
     const policy = all['bill.reset_policy']
-    return { ...all, branchCode: code, billNoExample: formatBillNo(code, policy, periodKey(policy, now()), 1) }
+    return { ...all, 'license.employee_cap': license.employeeCap(), branchCode: code, billNoExample: formatBillNo(code, policy, periodKey(policy, now()), 1) }
   }
 
   async function printBill(actor: Parameters<typeof sales.get>[0], billId: string, reprint: boolean) {
@@ -122,6 +179,11 @@ export function createAppContext(opts: AppContextOptions) {
 
   const handlers: Handlers = {
     'system.info': () => ({
+      deviceRole: device.local.role,
+      deviceName: device.local.name,
+      hostName: null,
+      hostConnected: null,
+      offlinePending: null,
       appVersion: v.app,
       electron: v.electron,
       node: v.node,
@@ -172,7 +234,44 @@ export function createAppContext(opts: AppContextOptions) {
       return null
     },
 
-    'audit.verify': () => audit.verifyChain(),
+    'audit.verify': () => ({ ...audit.verifyChain(), anchor: backup.checkAuditAnchor() }),
+    'audit.list': (_ctx, input) => auditQuery.list(input),
+
+    // ---- Host / Client over the LAN (D33–D34) ------------------------------
+    'lan.status': () => lan.status(),
+    'lan.syncNow': () => lan.status(),
+    'lan.setMode': (ctx, input) => lan.setMode(ctx.actor, input.mode, input.port),
+    'lan.startPairing': (ctx) => lan.startPairing(ctx.actor),
+    'lan.cancelPairing': () => (lan.host.cancelPairing(), null),
+    'lan.revokeDevice': (ctx, input) => (lan.revoke(ctx.actor, input.id), null),
+    'lan.ping': (_ctx, input) => lan.ping(input.address),
+    'lan.pair': (_ctx, input) => lan.pair(input),
+    'lan.unpair': () => {
+      throw new AppError('LAN_NOT_AVAILABLE') // only a Client can unpair
+    },
+
+    // ---- license (Implement.md §6.11) -------------------------------------
+    'license.status': () => license.status(),
+    'license.import': async (ctx, input) => {
+      const raw = input.content ?? (await license.pickFile())
+      if (raw === null) return null // dialog cancelled
+      return license.install(ctx.actor, raw)
+    },
+    'audit.overview': () => auditQuery.overview(),
+
+    // ---- backup / restore (Implement.md §6.10) ----------------------------
+    'backup.overview': () => backup.overview(),
+    'backup.list': () => backup.list(),
+    'backup.run': (ctx) => backup.run('manual', ctx.actor),
+    'backup.saveSchedule': (ctx, input) => backup.saveSchedule(ctx.actor, input),
+    'backup.pickFolder': () => (remoteScope() ? null : backup.pickFolder()), // the folder dialog belongs to the Host machine
+    'backup.restoreCopy': (ctx, input) => backup.restoreCopy(ctx.actor, input.id),
+    'backup.restoreReplace': async (ctx, input) => {
+      await backup.stageReplace(ctx.actor, input.id)
+      // let the reply reach the window before the app restarts
+      if (opts.relaunch) setTimeout(opts.relaunch, 300)
+      return { restarting: !!opts.relaunch }
+    },
 
     // ---- catalog ----------------------------------------------------------
     'catalog.categories': (ctx) => catalog.categories(ctx.actor),
@@ -200,7 +299,7 @@ export function createAppContext(opts: AppContextOptions) {
       ...catalog.posCatalog(ctx.actor),
       vatRateBp: settings.get('vat.rate_bp'),
       promptPayId: settings.get('promptpay.id'),
-      device: { id: device.local.id, name: device.local.name },
+      device: { id: device.currentId(), name: device.currentName() },
       branchName: ctx.actor.branchName,
     }),
     'pos.checkout': (ctx, input) => {
@@ -298,6 +397,11 @@ export function createAppContext(opts: AppContextOptions) {
       const file = await opts.pickFile?.()
       return file ? expenses.storeReceipt(file) : null
     },
+    'expenses.uploadReceipt': (_ctx, input) => {
+      const data = Buffer.from(input.dataBase64, 'base64')
+      if (data.length === 0 || data.length > 5 * 1024 * 1024) throw new AppError('INVALID_INPUT', { fields: { receiptFile: ['size'] } })
+      return expenses.storeReceiptBytes(input.ext, data)
+    },
     'expenses.receipt': (ctx, input) => expenses.receiptDataUrl(ctx.actor, input.id),
 
     // ---- dashboard / notifications -----------------------------------------
@@ -311,6 +415,11 @@ export function createAppContext(opts: AppContextOptions) {
     'reports.zList': (ctx, input) => reports.zList(ctx.actor, input.from, input.to),
     'reports.export': async (ctx, input) => {
       const f = reports.exportCsv(ctx.actor, input.report, input.from, input.to)
+      const scope = remoteScope()
+      if (scope) {
+        scope.effects.push({ kind: 'save', name: f.name, content: f.content }) // the Client shows its own save dialog
+        return null
+      }
       return (await opts.saveFile?.(f.name, f.content)) ?? null
     },
     'tax.list': (ctx, input) => reports.taxList(ctx.actor, input.from, input.to, input.billId),
@@ -360,11 +469,12 @@ export function createAppContext(opts: AppContextOptions) {
     handlers,
     sessions,
     resolveActor: (token) => authService.resolve(token),
+    gate: (ch) => (READ_ONLY_BLOCKED_CHANNELS.has(ch) && license.isReadOnly() ? { code: 'LICENSE_READ_ONLY' } : null),
     audit,
     ...(opts.log ? { log: opts.log } : {}),
   })
 
-  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard }
+  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard, backup, license, lan, syncHost }
 }
 
 export type AppContext = ReturnType<typeof createAppContext>

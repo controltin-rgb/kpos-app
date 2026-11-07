@@ -10,10 +10,15 @@ files:
   - '!docs/**'
   - '!tests/**'
   - '!migrations/**'
+  - '!migrations-client/**'
 extraResources:
   # SQL migrations are read at runtime by src/main/db/migrate.ts (phase 1)
   - from: migrations
     to: migrations
+    filter: ['*.sql']
+  # the Client's local offline-queue schema (phase 4c-2)
+  - from: migrations-client
+    to: migrations-client
     filter: ['*.sql']
 asarUnpack:
   # native module must live outside the asar archive

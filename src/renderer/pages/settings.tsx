@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { SettingsDto } from '@shared/api-sales'
 import { BILL_RESET_POLICIES, formatBillNo, periodKey, type BillResetPolicy } from '@shared/bill-number'
 import { isValidPromptPayId } from '@shared/promptpay'
@@ -9,6 +10,8 @@ import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useNow } from '@renderer/lib/events'
 import { useSession } from '@renderer/lib/session'
+import { LicenseSection } from './license'
+import { LanSection } from './lan'
 
 const st = t.settings
 type Tab = keyof typeof st.tabs
@@ -30,9 +33,13 @@ const DRAFT_KEYS: (keyof Draft)[] = ['vat.rate_bp', 'bill.reset_policy', 'prompt
 
 /** docs/design/Settings.dc.html (draft) — sections available in phase 2. */
 export function SettingsPage() {
-  const { can } = useSession()
+  const { can, system } = useSession()
   const toast = useToast()
-  const [tab, setTab] = useState<Tab>('tax')
+  const [params] = useSearchParams()
+  const [tab, setTab] = useState<Tab>(() => {
+    const q = params.get('tab')
+    return q && q in st.tabs ? (q as Tab) : 'tax'
+  })
   const [saved, setSaved] = useState<SettingsDto | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [vatText, setVatText] = useState('')
@@ -56,7 +63,18 @@ export function SettingsPage() {
     }
   }, [toast])
 
-  if (!saved || !draft) return <PageHeader icon="gear" tone="teal" title={st.title} subtitle={st.subtitle} />
+  // a Client whose Host is down cannot load the shop settings — still show its own connection / offline queue
+  if (!saved || !draft)
+    return (
+      <>
+        <PageHeader icon="gear" tone="teal" title={st.title} subtitle={st.subtitle} />
+        {system?.deviceRole === 'client' && (
+          <Card className="flex max-w-3xl flex-col gap-6">
+            <LanSection />
+          </Card>
+        )}
+      </>
+    )
 
   const vatBp = /^\d{1,2}(\.\d{1,2})?$/.test(vatText) ? Math.round(Number(vatText) * 100) : null
   const ppValid = draft['promptpay.id'] === '' || isValidPromptPayId(draft['promptpay.id'])
@@ -207,10 +225,10 @@ export function SettingsPage() {
       )}
 
       {tab === 'device' && (
-        <Card className="flex max-w-3xl flex-col gap-2">
-          <h2 className="m-0 text-lg font-bold">{st.deviceTitle}</h2>
-          <span className="text-sm">{st.deviceStandalone}</span>
-          <span className="text-sm text-muted-foreground">{st.employeeCap(saved['license.employee_cap'])}</span>
+        <Card className="flex max-w-3xl flex-col gap-6">
+          <LanSection />
+          <div className="border-t border-border" />
+          <LicenseSection />
         </Card>
       )}
     </>

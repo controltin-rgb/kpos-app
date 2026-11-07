@@ -5,6 +5,8 @@ import { promoApi } from './api-promo'
 import { reportsApi } from './api-reports'
 import { dashboardApi } from './api-dashboard'
 import { stockApi } from './api-stock'
+import { licenseApi, systemApi } from './api-system'
+import { lanApi } from './api-lan'
 import type { Permission } from './permissions'
 
 /**
@@ -65,6 +67,14 @@ export interface SessionUser {
 }
 
 export interface SystemInfo {
+  /** Standalone / Host / Client (D33) */
+  deviceRole: 'standalone' | 'host' | 'client'
+  deviceName: string
+  /** Client: the Host it works through and whether it is reachable now */
+  hostName: string | null
+  hostConnected: boolean | null
+  /** Client: offline bills still waiting for the Host (D36) */
+  offlinePending: number | null
   appVersion: string
   electron: string
   node: string
@@ -130,9 +140,13 @@ export interface RoleSummary extends RoleOption {
   maxDiscountBp: number
 }
 
-export type AuditVerifyResult =
+export type AuditVerifyResult = (
   | { ok: true; count: number }
   | { ok: false; count: number; brokenAtSeq?: number; reason: string }
+) & {
+  /** the newest verified backup's recorded audit head still matches the live log (null = no backup yet) */
+  anchor?: { ok: boolean; seq: number; at: number } | null
+}
 
 // ---------------------------------------------------------------------------
 // Endpoints
@@ -222,6 +236,9 @@ export const api = {
 
   ...salesApi,
   ...stockApi,
+  ...systemApi,
+  ...licenseApi,
+  ...lanApi,
   ...expensesApi,
   ...promoApi,
   ...reportsApi,
@@ -246,6 +263,10 @@ export type AppEvent =
   | { type: 'bill.changed'; billId: string }
   | { type: 'shift.changed' }
   | { type: 'cfd.state'; payload: CfdState }
+  /** Client: connection to the Host changed (D33) */
+  | { type: 'lan.state'; connected: boolean; error: string | null }
+  /** Client: offline bills waiting for / refused by the Host (D36) */
+  | { type: 'sync.state'; pending: number; rejected: number }
 
 /** API surface exposed on window.kposs by the preload script. */
 export interface KpossBridge {

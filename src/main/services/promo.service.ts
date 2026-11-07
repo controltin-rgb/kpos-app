@@ -76,7 +76,8 @@ export class PromoService {
   // promotions
   // ===========================================================================
 
-  private defs(branchId: string): (PromoDef & { usedCount: number })[] {
+  /** Promotion definitions of the branch (also copied to Clients for offline sales). */
+  defs(branchId: string): (PromoDef & { usedCount: number })[] {
     const rows = this.db
       .prepare(
         `SELECT p.*, (SELECT count(DISTINCT d.bill_id) FROM bill_discounts d JOIN bills b ON b.id = d.bill_id WHERE d.promotion_id = p.id AND b.status = 'paid') AS used

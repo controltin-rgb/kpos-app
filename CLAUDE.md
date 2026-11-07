@@ -57,18 +57,21 @@ docs/            Implement.md, design/ (ต้นแบบหน้าจอ), P
 
 ## คำสั่งที่ใช้บ่อย (ปรับให้ตรงเมื่อสร้างโปรเจกต์แล้ว)
 ```
-npm run dev          # รันแอปโหมดพัฒนา (electron-vite dev)
-npm run build        # typecheck + electron-vite build + electron-builder --dir → release/
-npm run build:dist   # เหมือน build แต่สร้างตัวติดตั้ง (dmg/nsis/AppImage)
-npm run test         # vitest — รันภายใต้ Node ของ Electron (ELECTRON_RUN_AS_NODE=1) ให้ native module ตรงกับตอนใช้งานจริง
-npm run migrate      # รัน migration กับ DB ตัวอย่าง .data/dev.sqlite (แอปรันเองอัตโนมัติตอนเปิด)
-npm run lint && npm run typecheck   # typecheck ตรวจ tsconfig.node.json และ tsconfig.web.json แยกกัน
-KPOSS_USER_DATA=/tmp/x npm run dev  # (dev เท่านั้น) ใช้โฟลเดอร์ข้อมูลแยก เช่น ทดสอบหน้าตั้งค่าครั้งแรก
+pnpm dev          # รันแอปโหมดพัฒนา (electron-vite dev)
+pnpm build        # typecheck + electron-vite build + electron-builder --dir → release/
+pnpm build:dist   # เหมือน build แต่สร้างตัวติดตั้ง (dmg/nsis/AppImage)
+pnpm test         # vitest — รันภายใต้ Node ของ Electron (ELECTRON_RUN_AS_NODE=1) ให้ native module ตรงกับตอนใช้งานจริง
+pnpm migrate      # รัน migration กับ DB ตัวอย่าง .data/dev.sqlite (แอปรันเองอัตโนมัติตอนเปิด)
+pnpm seed -- --reset  # สร้างข้อมูลตัวอย่าง (ร้าน/เมนู/สต็อก/ขาย 8 วัน) ที่ .data/userdata แล้วรันด้วย KPOSS_USER_DATA=.data/userdata pnpm dev
+pnpm lint && pnpm typecheck   # typecheck ตรวจ tsconfig.node.json และ tsconfig.web.json แยกกัน
+KPOSS_USER_DATA=/tmp/x pnpm dev  # (dev เท่านั้น) ใช้โฟลเดอร์ข้อมูลแยก เช่น ทดสอบหน้าตั้งค่าครั้งแรก
 ```
-- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D10, D14–D17, D19–D22 ผู้ใช้ยืนยันแล้ว; D11–D13, D18, D23 รอตรวจ) อ่านก่อนเริ่มงาน
+- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D10, D14–D17, D19–D22, D24–D31, D33–D36 ผู้ใช้ยืนยันแล้ว; D11–D13, D18, D23, D32 รอตรวจ) อ่านก่อนเริ่มงาน
 - IPC: ทุก endpoint ประกาศใน `src/shared/api.ts` (access + zod input) → handler ใน `src/main/app-context.ts` → service → repo; ทดสอบผ่าน `createTestApp()` ใน `tests/helpers/app.ts`
 - TypeScript ปักไว้ที่ 6.0.x เพราะ typescript-eslint ยังไม่รองรับ TS 7
-- ถ้า `npm run dev` ขึ้น error `does not provide an export named 'BrowserWindow'` แปลว่า shell มี `ELECTRON_RUN_AS_NODE=1` ค้างอยู่ ให้ `unset ELECTRON_RUN_AS_NODE`
+- ถ้า `pnpm dev` ขึ้น error `does not provide an export named 'BrowserWindow'` แปลว่า shell มี `ELECTRON_RUN_AS_NODE=1` ค้างอยู่ ให้ `unset ELECTRON_RUN_AS_NODE`
+- ใช้ **pnpm** เท่านั้น (ห้ามใช้ npm/yarn, ห้ามสร้าง package-lock.json) pnpm 10 บล็อก build script โดยค่าเริ่มต้น: อนุญาตเฉพาะ electron/electron-winstaller/esbuild ใน `pnpm.onlyBuiltDependencies` ของ package.json; better-sqlite3 ใช้ prebuilt จึงห้ามอนุมัติ (ไม่งั้น node-gyp ต้องการ Python + VS Build Tools)
+- ถ้าขึ้น `Electron uninstall` ให้รัน `node install.js` ในโฟลเดอร์ `node_modules/.pnpm/electron@*/node_modules/electron`
 - renderer อยู่ที่ `src/renderer/` (มี `index.html`, `main.tsx`, `app.tsx`), preload อยู่ที่ `src/preload/` (build เป็น CJS เพราะเปิด sandbox)
 - ESLint บล็อกไม่ให้ renderer import `@main/*`, `better-sqlite3`, `electron`, `node:*` (บังคับกฎข้อ 6)
 

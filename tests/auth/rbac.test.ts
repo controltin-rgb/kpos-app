@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ALL_PERMISSIONS } from '@shared/permissions'
 import { createTestApp } from '../helpers/app'
+import { installLicense } from '../helpers/license'
 
 describe('IPC router', () => {
   it('rejects unknown channels', async () => {
@@ -89,7 +90,7 @@ describe('user management rules', () => {
   it('enforces the employee cap on create and re-activation', async () => {
     const t = createTestApp()
     await t.setup()
-    t.db.prepare(`UPDATE settings SET value_json = '3' WHERE key = 'license.employee_cap'`).run()
+    await installLicense(t, { features: { maxEmployees: 3 } }) // the cap comes from the license (D29)
     const create = (username: string) => ({ username, displayName: username, roleId: '', password: 'pass-12345' })
     const cashierRole = await t.roleId('cashier')
     const a = await t.call(1, 'users.create', { ...create('emp1'), roleId: cashierRole })

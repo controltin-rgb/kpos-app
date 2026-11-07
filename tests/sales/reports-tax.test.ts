@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createAppContext } from '@main/app-context'
 import { formatTaxId, isValidThaiTaxId } from '@shared/tax-id'
 import { createTestApp } from '../helpers/app'
+import { installLicense } from '../helpers/license'
 import { T0 } from '../helpers/fixtures'
 import { requestId, seedShop } from '../helpers/shop'
 
@@ -67,6 +68,7 @@ describe('tax invoices (D19, D20) — formats must be reviewed by an accountant 
     expect((await t.call(1, 'orders.get', { id: a.bill.id })).events.map((e) => e.event)).toContain('tax_invoice')
 
     // next Buddhist year starts again at 000001
+    await installLicense(t) // a year later the trial would be over (D28)
     t.advance(365 * DAY)
     const b = await sell([{ sizeId: shop.sizes.s16, qty: 1 }])
     expect((await t.call(1, 'tax.issue', { type: 'full', billId: b.bill.id, customer: BUYER })).invoiceNo).toBe('A-TX-70-000001')

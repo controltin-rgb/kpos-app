@@ -35,13 +35,13 @@ export class ShiftService {
 
   /** The open shift of this device, or null. */
   current(): ShiftSummaryDto | null {
-    const s = this.repo.openShiftForDevice(this.devices.local.id)
+    const s = this.repo.openShiftForDevice(this.devices.currentId())
     return s ? this.summary(s) : null
   }
 
   /** Must be called inside a transaction; throws SHIFT_NOT_OPEN. */
   requireOpen(): ShiftRow {
-    const s = this.repo.openShiftForDevice(this.devices.local.id)
+    const s = this.repo.openShiftForDevice(this.devices.currentId())
     if (!s) throw new AppError('SHIFT_NOT_OPEN')
     return s
   }

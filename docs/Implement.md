@@ -113,12 +113,12 @@ POS ร้านเครื่องดื่ม ใช้งานต่อเ
 ```bash
 mkdir kposs && cd kposs && git init
 # copy ไฟล์ตาม §0 ก่อน
-npm init -y
-npm i better-sqlite3 zod better-auth react react-dom react-router-dom
-npm i -D typescript electron electron-vite electron-builder vite tailwindcss vitest @types/better-sqlite3 eslint
-npx shadcn@latest init
+pnpm init
+pnpm add better-sqlite3 zod better-auth react react-dom react-router-dom
+pnpm add -D typescript electron electron-vite electron-builder vite tailwindcss vitest @types/better-sqlite3 eslint
+pnpm dlx shadcn@latest init
 ```
-- better-sqlite3 เป็น native module: ใช้ `electron-rebuild` (หรือ `electron-builder install-app-deps`) ให้ตรงเวอร์ชัน Electron และตั้งให้ unpack จาก asar
+- better-sqlite3 เป็น native module: ใช้ prebuilt ที่มากับแพ็กเกจ (ไม่ต้องคอมไพล์; อย่าอนุมัติ build script ของ better-sqlite3 ใน pnpm) และตั้งให้ unpack จาก asar
 - เปิด TypeScript `strict`, ตั้ง path alias `@shared`, `@main`, `@renderer`
 
 ---
@@ -312,7 +312,7 @@ font Noto Sans Thai · card radius 20–22 · input height 44 · toggle 52×32 �
 
 **เฟส 0 — โครงโปรเจกต์**
 - Electron + Vite + React + Tailwind + shadcn, TypeScript strict, ESLint, vitest, i18n ไทย
-- เกณฑ์: `npm run dev` เปิดหน้าต่างว่างได้, `npm run build` ผ่าน, better-sqlite3 โหลดใน Electron ได้
+- เกณฑ์: `pnpm dev` เปิดหน้าต่างว่างได้, `pnpm build` ผ่าน, better-sqlite3 โหลดใน Electron ได้
 
 **เฟส 1 — ฐานข้อมูลและแกนระบบ**
 - connection + PRAGMA, migration runner (+backup ก่อนรัน), migration 0001 (ตารางทั้งหมดใน §5.2 + trigger §5.3)
