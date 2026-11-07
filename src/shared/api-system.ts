@@ -70,6 +70,38 @@ export type BackupKind = (typeof BACKUP_KINDS)[number]
 export const BACKUP_KEEP_DAILY = [14, 30, 90] as const
 export const BACKUP_KEEP_MONTHLY = 6
 
+/** D38: point-in-time restore window and how often the change journal is shipped to files. */
+export const JOURNAL_KEEP_DAYS = 14
+export const JOURNAL_SHIP_INTERVAL_MS = 10_000
+
+/** Point-in-time restore (Tier B/C, D38). */
+export interface PitrStatusDto {
+  /** times that can be restored to, oldest first (one range per timeline) */
+  ranges: { from: number; to: number }[]
+  keepDays: number
+  intervalSec: number
+  /** captured changes not yet written to the journal files */
+  pendingRows: number
+  lastShippedAt: number | null
+  offsite: 'off' | 'ok' | 'error'
+  error: string | null
+  /** size of the local journal folder */
+  bytes: number
+}
+
+export interface PitrInspectDto extends RestoreInspectDto {
+  /** the point asked for */
+  pointInTime: number
+  /** time of the last change actually included (≤ pointInTime) */
+  appliedUntil: number
+  /** changes replayed on top of the snapshot */
+  changes: number
+  baseStartedAt: number
+  /** bills in the current data that the restored data does not have */
+  lostBills: number
+  lostSalesSatang: number
+}
+
 export interface BackupDto {
   id: string
   kind: BackupKind
@@ -107,6 +139,8 @@ export interface BackupOverviewDto {
   cloudLicensed: boolean
   /** Client → Host / cloud outbox rows not sent yet (sync_queue) */
   outboxPending: number
+  /** null = the change journal is not running on this machine */
+  pitr: PitrStatusDto | null
 }
 
 export interface RestoreInspectDto {
@@ -159,6 +193,10 @@ export const systemApi = {
    * then the app restarts and swaps the file before opening it.
    */
   'backup.restoreReplace': ep<{ restarting: boolean }>()('backup:restore', z.object({ id, confirm: z.literal('RESTORE') })),
+  /** Point-in-time step 1: snapshot + journal replay into a separate file, with what would be lost. */
+  'backup.pitrCopy': ep<PitrInspectDto>()('backup:restore', z.object({ at: z.number().int().positive(), confirm: z.literal('RESTORE') })),
+  /** Point-in-time step 2: rebuild the same point, back up the current state, swap at restart. */
+  'backup.pitrReplace': ep<{ restarting: boolean }>()('backup:restore', z.object({ at: z.number().int().positive(), confirm: z.literal('RESTORE') })),
 } as const
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { BackupDto, BackupOverviewDto, RestoreInspectDto } from '@shared/api-system'
+import type { BackupDto, BackupOverviewDto, PitrInspectDto, PitrStatusDto, RestoreInspectDto } from '@shared/api-system'
 import { BACKUP_KEEP_DAILY } from '@shared/api-system'
 import { Card, Chip, GradientButton, OutlineButton, PageHeader, Pagination, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
-import { formatDateTimeShort, formatTime } from '@renderer/lib/format'
+import { formatDateTimeShort, formatTime, money } from '@renderer/lib/format'
 import { bangkokToday, panelClass } from '@renderer/lib/forms'
 import { useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
@@ -53,13 +53,15 @@ export function BackupPage() {
   const [page, setPage] = useState(1)
   const [selId, setSelId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
-  const [now] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  const [mode, setMode] = useState<'A' | 'B'>('A')
 
   const load = useCallback(async () => {
     try {
       const [o, l] = await Promise.all([call('backup.overview'), call('backup.list')])
       setOv(o)
       setList(l)
+      setNow(Date.now())
     } catch (err) {
       toast(errorMessage(err), 'error')
     }
@@ -88,6 +90,7 @@ export function BackupPage() {
   }
 
   const last = ov?.last ?? null
+  const pitr = ov?.pitr ?? null
   const rows = list.slice((page - 1) * PER_PAGE, page * PER_PAGE)
 
   return (
@@ -123,35 +126,46 @@ export function BackupPage() {
           <span className="text-[13px] text-muted-foreground">{b.tiersHint}</span>
         </div>
         <div className="flex flex-wrap gap-3">
-          {b.tiers.map((tier) => (
-            <button
-              key={tier.id}
-              type="button"
-              aria-pressed={tier.enabled}
-              aria-disabled={!tier.enabled}
-              className={cn(
-                'flex min-h-32 flex-[1_1_240px] flex-col items-start gap-2 rounded-[18px] border-2 p-4 text-left font-[inherit] text-foreground',
-                tier.enabled ? 'cursor-pointer border-[#9776F6] bg-[#F5F2FE]' : 'cursor-not-allowed border-[#E6E1D9] bg-white opacity-70',
-              )}
-            >
-              <span className="flex w-full items-center gap-2">
-                <span
-                  className="flex size-7 shrink-0 items-center justify-center rounded-lg text-sm font-bold"
-                  style={tier.enabled ? { background: 'linear-gradient(135deg,#8B6CF0,#6A47DB)', color: '#FFFFFF' } : { background: '#EFEBE6', color: '#7A8090' }}
-                >
-                  {tier.id}
+          {b.tiers.map((tier) => {
+            const enabled = tier.id === 'A' || !!pitr
+            const pressed = tier.id === 'A' ? mode === 'A' : mode === 'B'
+            const chip = tier.id === 'A' ? b.tierOn : !pitr ? b.tierOff : tier.id === 'B' ? b.tierOn : b.tierWithB
+            return (
+              <button
+                key={tier.id}
+                type="button"
+                aria-pressed={pressed}
+                aria-disabled={!enabled}
+                onClick={() => enabled && setMode(tier.id === 'A' ? 'A' : 'B')}
+                className={cn(
+                  'flex min-h-32 flex-[1_1_240px] flex-col items-start gap-2 rounded-[18px] border-2 p-4 text-left font-[inherit] text-foreground',
+                  !enabled ? 'cursor-not-allowed border-[#E6E1D9] bg-white opacity-70' : pressed ? 'cursor-pointer border-[#9776F6] bg-[#F5F2FE]' : 'cursor-pointer border-[#E6E1D9] bg-white',
+                )}
+              >
+                <span className="flex w-full items-center gap-2">
+                  <span
+                    className="flex size-7 shrink-0 items-center justify-center rounded-lg text-sm font-bold"
+                    style={enabled ? { background: 'linear-gradient(135deg,#8B6CF0,#6A47DB)', color: '#FFFFFF' } : { background: '#EFEBE6', color: '#7A8090' }}
+                  >
+                    {tier.id}
+                  </span>
+                  <span className="flex-1 text-base font-bold">{tier.title}</span>
+                  <span
+                    className="inline-flex h-6 shrink-0 items-center rounded-xl px-2.5 text-[11px] font-bold"
+                    style={enabled ? { background: '#DDF5E8', color: '#11724A' } : { background: '#F0EDE8', color: '#5C6270' }}
+                  >
+                    {chip}
+                  </span>
                 </span>
-                <span className="flex-1 text-base font-bold">{tier.title}</span>
-                <span
-                  className="inline-flex h-6 shrink-0 items-center rounded-xl px-2.5 text-[11px] font-bold"
-                  style={tier.enabled ? { background: '#DDF5E8', color: '#11724A' } : { background: '#F0EDE8', color: '#5C6270' }}
-                >
-                  {tier.phase}
-                </span>
-              </span>
-              <span className="text-[13px] text-muted-foreground">{tier.desc}</span>
-            </button>
-          ))}
+                <span className="text-[13px] text-muted-foreground">{tier.desc}</span>
+                {tier.id === 'B' && pitr && (
+                  <span className={cn('text-xs', pitr.offsite === 'error' || pitr.error ? 'text-warning-foreground' : 'text-[#7A8090]')}>
+                    {pitr.lastShippedAt ? b.pitrLine(b.secondsAgo(Math.max(0, Math.round((now - pitr.lastShippedAt) / 1000))), pitr.pendingRows) : b.pitrNever} · {b.pitrOffsite[pitr.offsite]} · {b.pitrSize(sizeLabel(pitr.bytes))}
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
       </Card>
 
@@ -193,7 +207,11 @@ export function BackupPage() {
           {ov && <ScheduleCard ov={ov} onSaved={setOv} />}
         </div>
 
-        <RestorePanel list={list} selected={selected} onSelect={setSelId} now={now} onChanged={() => void load()} />
+        {mode === 'B' && pitr ? (
+          <PitrPanel pitr={pitr} now={now} onChanged={() => void load()} />
+        ) : (
+          <RestorePanel list={list} selected={selected} onSelect={setSelId} now={now} onChanged={() => void load()} />
+        )}
       </div>
     </>
   )
@@ -390,6 +408,162 @@ function RestorePanel({ list, selected, onSelect, now, onChanged }: { list: Back
           <span>{b.inspectLines(inspect.bills, inspect.users, inspect.auditCount)}</span>
           {inspect.lastBillAt && <span>{b.inspectLastBill(formatDateTimeShort(inspect.lastBillAt))}</span>}
           <span>{b.schemaNote(inspect.schemaVersion)}</span>
+          <span className="break-all">{b.inspectPath(inspect.path)}</span>
+          <OutlineButton className="mt-1.5 self-start" onClick={() => (setCopyMode(false), setInspect(null))}>
+            {b.useThis}
+          </OutlineButton>
+        </div>
+      )}
+
+      <label className="flex flex-col gap-1.5 text-sm font-semibold">
+        {b.confirmLabel}
+        <TextInput value={confirm} disabled={!allowed} onChange={(e) => setConfirm(e.target.value)} placeholder={b.confirmWord} autoComplete="off" />
+      </label>
+      <button
+        type="button"
+        disabled={!canGo}
+        onClick={() => void go()}
+        className="min-h-[52px] rounded-[26px] border-0 font-[inherit] text-base font-bold"
+        style={
+          canGo
+            ? { background: copyMode ? 'linear-gradient(90deg,#6A47DB,#9776F6)' : 'linear-gradient(90deg,#F4616A,#DC3A44)', color: '#FFFFFF', cursor: 'pointer' }
+            : { background: '#E6E1D9', color: '#8C8880', cursor: 'not-allowed' }
+        }
+      >
+        {busy ? b.working : copyMode ? b.doCopy : b.doReplace}
+      </button>
+      <span className="text-xs text-[#7A8090]">{allowed ? b.footnote : b.noRestorePermission}</span>
+
+      {restarting && (
+        <div role="alertdialog" aria-live="assertive" className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(31,36,48,0.45)]">
+          <div className="rounded-[22px] bg-white px-8 py-6 text-lg font-bold shadow-[0_10px_30px_rgba(60,40,90,0.2)]">{b.restarting}</div>
+        </div>
+      )}
+    </aside>
+  )
+}
+
+const ICT = 7 * 3_600_000
+/** ms → "2026-11-07T14:05:09" for <input type="datetime-local"> in Bangkok time. */
+const toInput = (ms: number) => new Date(ms + ICT).toISOString().slice(0, 19)
+/** "2026-11-07T14:05[:09]" (Bangkok) → ms; NaN when incomplete. */
+const fromInput = (v: string) => Date.parse(`${v.length === 16 ? `${v}:00` : v}+07:00`)
+const secondLabel = (ms: number) => `${formatDateTimeShort(ms)}:${String(Math.floor(((ms + ICT) % 60_000) / 1000)).padStart(2, '0')}`
+
+/** Tier B/C restore: pick any second inside the restorable ranges (D38). Same two-step flow as Tier A. */
+function PitrPanel({ pitr, now, onChanged }: { pitr: PitrStatusDto; now: number; onChanged: () => void }) {
+  const { can } = useSession()
+  const toast = useToast()
+  const allowed = can('backup:restore')
+  const latest = pitr.ranges.at(-1)?.to ?? null
+  const [value, setValue] = useState(() => (latest ? toInput(Math.floor(latest / 1000) * 1000) : ''))
+  const [copyMode, setCopyMode] = useState(true)
+  const [confirm, setConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [inspect, setInspect] = useState<PitrInspectDto | null>(null)
+  const [restarting, setRestarting] = useState(false)
+
+  const at = fromInput(value)
+  const valid = Number.isFinite(at)
+  const inRange = valid && pitr.ranges.some((r) => at >= r.from && at <= r.to)
+  const typed = confirm.trim() === b.confirmWord
+  const canGo = allowed && inRange && typed && !busy
+
+  // one bar per day for the last 14 days; tall = some time that day can be restored
+  const days = useMemo(() => {
+    const today = bangkokToday(now)
+    return Array.from({ length: 14 }, (_, i) => {
+      const start = today - (13 - i) * DAY
+      const end = start + DAY - 1000
+      const covering = pitr.ranges.filter((r) => r.from <= end && r.to >= start)
+      const pick = covering.length ? Math.min(end, Math.max(...covering.map((r) => r.to))) : null
+      return { daysAgo: 13 - i, start, end, pick }
+    })
+  }, [pitr.ranges, now])
+
+  async function go() {
+    if (!canGo) return
+    setBusy(true)
+    try {
+      if (copyMode) setInspect(await call('backup.pitrCopy', { at, confirm: 'RESTORE' }))
+      else {
+        const r = await call('backup.pitrReplace', { at, confirm: 'RESTORE' })
+        if (r.restarting) setRestarting(true)
+        else toast(b.restartManually)
+      }
+      setConfirm('')
+      onChanged()
+    } catch (err) {
+      toast(errorMessage(err), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <aside aria-label={b.restoreTitle} className={cn(panelClass, 'flex-[0_0_440px]')}>
+      <h2 className="m-0 text-xl font-bold">{b.restoreTitle}</h2>
+      <div className="flex flex-col gap-0.5 rounded-2xl bg-[#F5F2FE] px-4 py-3.5">
+        <span className="text-[13px] text-muted-foreground">{b.selected}</span>
+        <span className="text-lg font-bold">{valid ? b.pitrSelected(secondLabel(at)) : '—'}</span>
+        <span className={cn('text-[13px]', inRange || !valid ? 'text-muted-foreground' : 'text-warning-foreground')}>{inRange || !valid ? b.tiers[1]!.title : b.pitrOutside}</span>
+      </div>
+
+      <label className="flex flex-col gap-1.5 text-sm font-semibold">
+        {b.pitrWhen}
+        <TextInput type="datetime-local" step={1} value={value} disabled={!allowed} onChange={(e) => (setValue(e.target.value), setInspect(null))} />
+      </label>
+      <div className="flex flex-col gap-0.5 text-xs text-[#7A8090]">
+        <span className="font-bold text-primary">{b.pitrRanges}</span>
+        {pitr.ranges.length ? pitr.ranges.map((r) => <span key={r.from}>{b.pitrRange(secondLabel(r.from), secondLabel(r.to))}</span>) : <span>{b.pitrNoRange}</span>}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[13px] font-bold text-primary">{b.timeline}</span>
+        <div className="flex h-14 items-end gap-1.5">
+          {days.map((d) => {
+            const on = inRange && at >= d.start && at <= d.end
+            return (
+              <button
+                key={d.daysAgo}
+                type="button"
+                aria-label={b.timelineDay(d.daysAgo)}
+                title={b.timelineDay(d.daysAgo)}
+                disabled={d.pick === null}
+                onClick={() => d.pick !== null && (setValue(toInput(Math.floor(d.pick / 1000) * 1000)), setInspect(null))}
+                className={cn('flex-1 rounded-md border-0 p-0', d.pick !== null ? 'h-10 cursor-pointer' : 'h-3.5 cursor-default')}
+                style={{ background: on ? 'linear-gradient(180deg,#8B6CF0,#6A47DB)' : d.pick !== null ? '#CFC2F8' : '#EFEBE6' }}
+              />
+            )
+          })}
+        </div>
+        <span className="text-xs text-[#7A8090]">{b.tierNoteB}</span>
+      </div>
+
+      <div className="flex min-h-14 items-center justify-between gap-3">
+        <div className="flex flex-col">
+          <span className="text-[15px]">{b.optCopy}</span>
+          <span className="text-xs text-[#7A8090]">{b.optCopyDesc}</span>
+        </div>
+        <Toggle checked={copyMode} label={b.optCopy} disabled={!allowed} onChange={(v) => setCopyMode(v)} />
+      </div>
+      <div className="flex min-h-14 items-center justify-between gap-3">
+        <div className="flex flex-col">
+          <span className="text-[15px]">{b.optPreBackup}</span>
+          <span className="text-xs text-[#7A8090]">{b.optPreBackupDesc}</span>
+        </div>
+        <Toggle checked label={b.optPreBackup} disabled onChange={() => {}} />
+      </div>
+      <div className={cn('rounded-[14px] px-3.5 py-3 text-[13px]', copyMode ? 'bg-[#E3EEFE] text-[#1D4FA8]' : 'bg-warning text-warning-foreground')}>{copyMode ? b.warnCopy : b.warnReplace}</div>
+
+      {inspect && inspect.pointInTime === at && (
+        <div className="flex flex-col gap-1 rounded-2xl bg-success px-4 py-3 text-[13px] text-success-foreground">
+          <span className="font-bold">{b.inspectTitle}</span>
+          <span>{b.inspectLines(inspect.bills, inspect.users, inspect.auditCount)}</span>
+          <span>{b.pitrInspectLines(inspect.changes, formatDateTimeShort(inspect.baseStartedAt))}</span>
+          <span>{b.pitrApplied(secondLabel(inspect.appliedUntil))}</span>
+          {inspect.lastBillAt && <span>{b.inspectLastBill(formatDateTimeShort(inspect.lastBillAt))}</span>}
+          <span className={cn(inspect.lostBills ? 'font-bold text-warning-foreground' : '')}>{b.pitrLost(inspect.lostBills, money(inspect.lostSalesSatang))}</span>
           <span className="break-all">{b.inspectPath(inspect.path)}</span>
           <OutlineButton className="mt-1.5 self-start" onClick={() => (setCopyMode(false), setInspect(null))}>
             {b.useThis}

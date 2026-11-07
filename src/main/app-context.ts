@@ -35,6 +35,7 @@ import { remoteScope } from '@main/request-scope'
 import { LanManager, type LanManagerOptions } from '@main/lan/lan-manager'
 import { SyncHostService } from '@main/sync/sync-host.service'
 import { BackupService, type BackupPaths } from '@main/backup/backup.service'
+import { JournalService } from '@main/backup/journal'
 import { AuditQueryService } from '@main/services/audit-query.service'
 import { LicenseService } from '@main/license/license.service'
 import { LICENSE_PUBLIC_KEYS } from '@main/license/public-key'
@@ -60,6 +61,11 @@ export interface AppContextOptions {
   pickFile?: () => Promise<string | null>
   /** DB file + backup folder; null/absent when this process does not own a DB file (tests in memory, Client mode) */
   backupPaths?: BackupPaths | null
+  /**
+   * Change journal for point-in-time restore (D38), needs backupPaths. `restored`: a staged restore
+   * was just swapped in. Absent → Tier A snapshots only.
+   */
+  journal?: { dir: string; restored?: boolean }
   /** native folder picker for the off-site backup folder */
   pickFolder?: () => Promise<string | null>
   /** restarts the app (used to swap in a restored database before it is opened) */
@@ -80,9 +86,24 @@ export type { AppEvent } from '@shared/api'
 export function createAppContext(opts: AppContextOptions) {
   const { db } = opts
   const now = opts.now ?? Date.now
+  const audit = new AuditService(db, now)
+  // the journal starts before anything writes, so every change after the timeline start is in it
+  let settingsRef: SettingsService | null = null
+  const journal =
+    opts.journal && opts.backupPaths
+      ? new JournalService(db, audit, {
+          dir: opts.journal.dir,
+          now,
+          offsiteRoot: () => (settingsRef?.get('backup.offsite_enabled') ? settingsRef.get('backup.offsite_dir') || null : null),
+        })
+      : null
+  try {
+    journal?.start({ restored: opts.journal?.restored ?? false })
+  } catch (err) {
+    opts.log?.('[journal] start failed — point-in-time restore is off', err) // Tier A snapshots still work
+  }
   seedSystemRoles(db, now())
 
-  const audit = new AuditService(db, now)
   const license = new LicenseService(db, audit, {
     hardwareId: opts.hardwareId ?? 'HW-0000-0000-0000-0000',
     publicKeys: opts.licensePublicKeys ?? LICENSE_PUBLIC_KEYS,
@@ -103,6 +124,7 @@ export function createAppContext(opts: AppContextOptions) {
   audit.setDeviceProvider(() => device.auditDeviceId())
   const docs = new DocNumberService(db)
   const settings = new SettingsService(db, audit, now)
+  settingsRef = settings
   const stock = new StockService(db)
   const catalog = new CatalogService(db, audit, now)
   const inventory = new InventoryService(db, stock, audit, now)
@@ -115,7 +137,7 @@ export function createAppContext(opts: AppContextOptions) {
   const org = new OrgRepo(db)
   const reports = new ReportService(db, sales, shifts, stockOps, expenses, docs, settings, audit, now)
   const dashboard = new DashboardService(db, reports, shifts, stock, now, () => license.status().daysLeft)
-  const backup = new BackupService(db, audit, settings, { paths: opts.backupPaths ?? null, now, cloudLicensed: () => license.status().features.cloudBackup, ...(opts.pickFolder ? { pickFolder: opts.pickFolder } : {}) })
+  const backup = new BackupService(db, audit, settings, { paths: opts.backupPaths ?? null, now, cloudLicensed: () => license.status().features.cloudBackup, journal, ...(opts.pickFolder ? { pickFolder: opts.pickFolder } : {}) })
   const auditQuery = new AuditQueryService(db, now)
   const syncHost = new SyncHostService(db, catalog, promo, settings, docs, sales, audit, now)
   const lan = new LanManager(
@@ -269,6 +291,12 @@ export function createAppContext(opts: AppContextOptions) {
     'backup.restoreReplace': async (ctx, input) => {
       await backup.stageReplace(ctx.actor, input.id)
       // let the reply reach the window before the app restarts
+      if (opts.relaunch) setTimeout(opts.relaunch, 300)
+      return { restarting: !!opts.relaunch }
+    },
+    'backup.pitrCopy': (ctx, input) => backup.pitrCopy(ctx.actor, input.at),
+    'backup.pitrReplace': async (ctx, input) => {
+      await backup.pitrReplace(ctx.actor, input.at)
       if (opts.relaunch) setTimeout(opts.relaunch, 300)
       return { restarting: !!opts.relaunch }
     },
@@ -474,7 +502,7 @@ export function createAppContext(opts: AppContextOptions) {
     ...(opts.log ? { log: opts.log } : {}),
   })
 
-  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard, backup, license, lan, syncHost }
+  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard, backup, journal, license, lan, syncHost }
 }
 
 export type AppContext = ReturnType<typeof createAppContext>

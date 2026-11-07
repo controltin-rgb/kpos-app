@@ -234,8 +234,8 @@ pnpm dlx shadcn@latest init
 
 ### 6.10 Backup / Restore / PITR
 - **Tier A (เปิดใช้เฟสแรก):** snapshot รายวัน (ใช้ `VACUUM INTO` หรือ backup API ของ better-sqlite3) เก็บตามนโยบาย retention
-- **Tier B (เฟส 4):** WAL streaming
-- **Tier C:** snapshot + replay ledger เพื่อกู้ย้อนเวลา
+- **Tier B (เฟส 4d, D38):** บันทึกการเปลี่ยนแปลงในแอป (TEMP trigger → `change_journal` → ไฟล์ segment ทุก 10 วินาที ในเครื่อง + นอกเครื่อง) แทน WAL streaming/Litestream — `src/main/backup/journal.ts`
+- **Tier C:** snapshot + เล่นการเปลี่ยนแปลงซ้ำถึงเวลาที่เลือก (ทุกตาราง ไม่ใช่แค่ ledger) เก็บย้อนหลัง 14 วัน; timeline ใหม่หลัง restore/migrate
 - Restore ต้องมีสิทธิ์สูงสุด, ยืนยัน 2 ขั้น, สำรองสถานะปัจจุบันก่อนเสมอ, ลง audit
 
 ### 6.11 License

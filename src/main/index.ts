@@ -19,6 +19,8 @@ import { printHtml } from '@main/print/electron-printer'
 import { applyPendingRestore, type PendingRestoreResult } from '@main/backup/backup.service'
 import { machineFingerprint } from '@main/license/hardware-id'
 import { EVENT_CHANNEL } from '@shared/api'
+import { JOURNAL_SHIP_INTERVAL_MS } from '@shared/api-system'
+import type { JournalService } from '@main/backup/journal'
 
 const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
 
@@ -26,6 +28,7 @@ const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
 if (!app.isPackaged && process.env['KPOSS_USER_DATA']) app.setPath('userData', process.env['KPOSS_USER_DATA'])
 
 let db: Db | null = null
+let journal: JournalService | null = null
 
 /** Only our own pages may call the main process. */
 function isTrustedUrl(url: string): boolean {
@@ -232,6 +235,7 @@ app.whenReady().then(async () => {
         if (token) ctx.sessions.set(child, token)
       }),
     backupPaths: { dbPath: paths.dbPath, backupDir: paths.backupDir },
+    journal: { dir: join(paths.backupDir, 'journal'), restored: restore?.status === 'applied' },
     pickFolder: async () => {
       const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
       return r.canceled ? null : (r.filePaths[0] ?? null)
@@ -260,9 +264,14 @@ app.whenReady().then(async () => {
     console.error('[backup] startup bookkeeping failed:', err)
   }
   // D25: daily snapshot — checked every minute; a snapshot missed while the app was closed runs soon after start
-  const backupTick = () => void ctx.backup.runDueSnapshot()
+  const backupTick = () => void ctx.backup.runDueSnapshot().then(() => ctx.backup.ensureJournalBase())
   setTimeout(backupTick, 30_000)
   setInterval(backupTick, 60_000).unref()
+  // D38: captured changes go to the journal files (and off-site) every 10 s
+  if (ctx.journal) {
+    journal = ctx.journal
+    setInterval(() => ctx.journal?.ship(), JOURNAL_SHIP_INTERVAL_MS).unref()
+  }
   // Host: open the LAN API for paired Clients (D33)
   void ctx.lan.startIfHost()
   forwardEvents(ctx.events)
@@ -278,7 +287,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
-  // (the Host LAN server dies with the process; nothing to flush)
+  // (the Host LAN server dies with the process) — the last captured changes go to the journal files
+  journal?.ship()
+  journal = null
   db?.close()
   db = null
 })

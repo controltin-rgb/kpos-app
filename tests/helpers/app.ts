@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { expect } from 'vitest'
 import { createAppContext, type AppContextOptions } from '@main/app-context'
 import type { Channel, Input, Output } from '@shared/api'
@@ -24,6 +25,8 @@ export interface TestAppOptions {
   lan?: AppContextOptions['lan']
   printHtml?: AppContextOptions['printHtml']
   saveFile?: AppContextOptions['saveFile']
+  /** start the change journal (needs files) in <backupDir>/journal; restored = a restore was just swapped in */
+  journal?: boolean | { restored: boolean }
   /** this machine's identity (default: POS-01, standalone) */
   device?: AppContextOptions['device']
 }
@@ -41,6 +44,7 @@ export function createTestApp(opts: TestAppOptions = {}) {
     authSecret: 'test-secret-'.padEnd(48, 'x'),
     now: () => t,
     ...(opts.files ? { backupPaths: opts.files } : {}),
+    ...(opts.files && opts.journal ? { journal: { dir: join(opts.files.backupDir, 'journal'), restored: typeof opts.journal === 'object' && opts.journal.restored } } : {}),
     ...(opts.relaunch ? { relaunch: opts.relaunch } : {}),
     hardwareId: opts.hardwareId ?? TEST_HW,
     licensePublicKeys: opts.licensePublicKeys ?? [TEST_LICENSE_KEYS.pub],

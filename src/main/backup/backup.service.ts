@@ -8,9 +8,10 @@ import { OrgRepo } from '@main/db/repos/org.repo'
 import { remoteScope } from '@main/request-scope'
 import { AuditService, type VerifyResult } from '@main/services/audit.service'
 import type { SettingsService } from '@main/services/settings.service'
-import { BACKUP_KEEP_MONTHLY, type BackupDto, type BackupKind, type BackupOverviewDto, type RestoreInspectDto } from '@shared/api-system'
+import { BACKUP_KEEP_MONTHLY, JOURNAL_KEEP_DAYS, JOURNAL_SHIP_INTERVAL_MS, type BackupDto, type BackupKind, type BackupOverviewDto, type PitrInspectDto, type PitrStatusDto, type RestoreInspectDto } from '@shared/api-system'
 import { AppError } from '@shared/errors'
 import { uuidv7 } from '@shared/id'
+import { journalPosition, type JournalService } from './journal'
 import { fileStamp, lastScheduledAt, selectForPrune } from './retention'
 
 export interface BackupPaths {
@@ -38,6 +39,8 @@ interface BackupRow {
   offsite_path: string | null
   offsite_error: string | null
   deleted_at: number | null
+  journal_timeline: string | null
+  journal_seq: number | null
   created_by_name?: string | null
 }
 
@@ -53,6 +56,8 @@ interface Manifest {
   audit: { seq: number; hash: string } | null
   verified: boolean
   createdBy: string | null
+  /** change-journal position inside the file (D38) */
+  journal?: { timeline: string; seq: number } | null
 }
 
 /** Written by stageReplace, consumed by applyPendingRestore at the next start. */
@@ -66,6 +71,9 @@ export interface PendingRestore {
   requestedAt: number
   preRestoreBackupId: string
   preRestoreFile: string
+  /** point-in-time restore: the time restored to (backupFile is then the base snapshot) */
+  pointInTime?: number
+  appliedUntil?: number
 }
 
 export type PendingRestoreResult =
@@ -80,6 +88,7 @@ export interface FileInspection {
   bills: number
   lastBillAt: number | null
   users: number
+  journal: { timeline: string; seq: number } | null
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +130,7 @@ export function inspectFile(path: string): FileInspection {
       bills: count('SELECT count(*) FROM bills') ?? 0,
       lastBillAt: count('SELECT max(created_at) FROM bills'),
       users: count('SELECT count(*) FROM users WHERE deleted_at IS NULL') ?? 0,
+      journal: journalPosition(db),
     }
   } finally {
     db.close()
@@ -188,6 +198,8 @@ export interface BackupServiceOptions {
   pickFolder?: () => Promise<string | null>
   /** the license allows cloud backup (D29) */
   cloudLicensed?: () => boolean
+  /** change journal for point-in-time restore (D38); absent = Tier A only */
+  journal?: JournalService | null
 }
 
 /**
@@ -269,6 +281,7 @@ export class BackupService {
       canPickFolder: !!this.opts.pickFolder && !remoteScope(),
       cloudLicensed: this.opts.cloudLicensed?.() ?? false,
       outboxPending: this.db.prepare('SELECT count(*) FROM sync_queue WHERE sent_at IS NULL').pluck().get() as number,
+      pitr: this.pitrStatus(),
     }
   }
 
@@ -359,7 +372,7 @@ export class BackupService {
     const info = inspectFile(file)
     const verified = info.integrityOk && info.audit.ok
     const finishedAt = this.now()
-    const manifest: Manifest = { id, kind, startedAt, finishedAt, sha256, sizeBytes, schemaVersion: info.schemaVersion, audit: info.head, verified, createdBy: actor?.userId ?? null }
+    const manifest: Manifest = { id, kind, startedAt, finishedAt, sha256, sizeBytes, schemaVersion: info.schemaVersion, audit: info.head, verified, createdBy: actor?.userId ?? null, journal: info.journal }
     writeFileSync(`${file}.json`, JSON.stringify(manifest, null, 2))
 
     const offsite = this.copyOffsite(file)
@@ -368,8 +381,8 @@ export class BackupService {
         this.db
           .prepare(
             `INSERT INTO backup_runs (id, kind, path, size_bytes, ok, error, created_by, started_at, finished_at, sha256, schema_version,
-               audit_seq, audit_hash, verified_at, offsite_path, offsite_error)
-             VALUES (@id, @kind, @path, @size, @ok, @error, @by, @startedAt, @finishedAt, @sha256, @schema, @seq, @hash, @verifiedAt, @offsitePath, @offsiteError)`,
+               audit_seq, audit_hash, verified_at, offsite_path, offsite_error, journal_timeline, journal_seq)
+             VALUES (@id, @kind, @path, @size, @ok, @error, @by, @startedAt, @finishedAt, @sha256, @schema, @seq, @hash, @verifiedAt, @offsitePath, @offsiteError, @jt, @js)`,
           )
           .run({
             id,
@@ -388,6 +401,8 @@ export class BackupService {
             verifiedAt: verified ? finishedAt : null,
             offsitePath: offsite.path,
             offsiteError: offsite.error,
+            jt: info.journal?.timeline ?? null,
+            js: info.journal?.seq ?? null,
           })
         this.audit.append({
           action: verified ? 'backup.run' : 'backup.failed',
@@ -401,7 +416,10 @@ export class BackupService {
         })
       })
       .immediate()
-    if (verified && kind === 'snapshot') this.prune()
+    if (verified && kind === 'snapshot') {
+      this.prune()
+      this.pruneJournal()
+    }
     const row = this.db.prepare('SELECT r.*, u.display_name AS created_by_name FROM backup_runs r LEFT JOIN users u ON u.id = r.created_by WHERE r.id = ?').get(id) as BackupRow
     if (!verified) throw new AppError('BACKUP_INVALID', { id })
     return this.toDto(row)
@@ -440,6 +458,20 @@ export class BackupService {
       })
       .immediate()
     return removed.length
+  }
+
+  /** D38 retention of the change journal (after the snapshot retention, so bases are final). */
+  pruneJournal(): string[] {
+    const j = this.opts.journal
+    if (!j?.isStarted) return []
+    const removed = j.prune(this.bases().map((b) => ({ timeline: b.journal_timeline!, finishedAt: b.finished_at!, seq: b.journal_seq! })))
+    if (removed.length)
+      this.db
+        .transaction(() => {
+          this.audit.append({ action: 'backup.journal_prune', permission: 'backup:create', branchId: this.branchId(null), entity: 'journal', after: { removed: removed.length }, risk: 'low' })
+        })
+        .immediate()
+    return removed
   }
 
   private verifiedFile(id: string): { row: BackupRow; info: FileInspection } {
@@ -491,18 +523,23 @@ export class BackupService {
       })
       .immediate()
     const pre = await this.run('pre_restore', actor)
-    const p = pendingPaths(dbPath)
-    copyFileSync(row.path, p.file)
+    copyFileSync(row.path, pendingPaths(dbPath).file)
+    return this.writePending(actor, row, pre, {})
+  }
+
+  private writePending(actor: Actor, base: BackupRow, pre: BackupDto, extra: Pick<PendingRestore, 'pointInTime' | 'appliedUntil'>): PendingRestore {
+    const p = pendingPaths(this.paths().dbPath)
     const pending: PendingRestore = {
-      backupId: row.id,
-      backupFile: basename(row.path),
-      backupStartedAt: row.started_at,
+      backupId: base.id,
+      backupFile: basename(base.path),
+      backupStartedAt: base.started_at,
       sha256: sha256File(p.file),
       requestedBy: actor.userId,
       requestedByName: actor.displayName,
       requestedAt: this.now(),
       preRestoreBackupId: pre.id,
       preRestoreFile: pre.fileName,
+      ...extra,
     }
     writeFileSync(p.manifest, JSON.stringify(pending, null, 2))
     return pending
@@ -527,7 +564,10 @@ export class BackupService {
           entity: 'backup',
           entityId: pending?.backupId ?? null,
           before: result.status === 'applied' ? { replacedFile: result.replacedPath ? basename(result.replacedPath) : null, preRestoreBackup: pending?.preRestoreFile ?? null } : null,
-          after: result.status === 'applied' ? { restoredFrom: pending!.backupFile, backupAt: pending!.backupStartedAt, requestedBy: pending!.requestedByName } : { error: result.error, requestedBy: pending?.requestedByName ?? null },
+          after:
+            result.status === 'applied'
+              ? { restoredFrom: pending!.backupFile, backupAt: pending!.backupStartedAt, requestedBy: pending!.requestedByName, ...(pending!.pointInTime ? { pointInTime: pending!.pointInTime, appliedUntil: pending!.appliedUntil } : {}) }
+              : { error: result.error, requestedBy: pending?.requestedByName ?? null },
           risk: 'high',
         })
       })
@@ -542,8 +582,8 @@ export class BackupService {
     let added = 0
     const known = this.db.prepare('SELECT 1 FROM backup_runs WHERE id = ? OR path = ?')
     const insert = this.db.prepare(
-      `INSERT INTO backup_runs (id, kind, path, size_bytes, ok, created_by, started_at, finished_at, sha256, schema_version, audit_seq, audit_hash, verified_at)
-       VALUES (@id, @kind, @path, @size, @ok, NULL, @startedAt, @finishedAt, @sha256, @schema, @seq, @hash, @verifiedAt)`,
+      `INSERT INTO backup_runs (id, kind, path, size_bytes, ok, created_by, started_at, finished_at, sha256, schema_version, audit_seq, audit_hash, verified_at, journal_timeline, journal_seq)
+       VALUES (@id, @kind, @path, @size, @ok, NULL, @startedAt, @finishedAt, @sha256, @schema, @seq, @hash, @verifiedAt, @jt, @js)`,
     )
     this.db
       .transaction(() => {
@@ -558,7 +598,7 @@ export class BackupService {
             continue
           }
           if (known.get(m.id, path)) continue
-          insert.run({ id: m.id, kind: m.kind, path, size: m.sizeBytes, ok: m.verified ? 1 : 0, startedAt: m.startedAt, finishedAt: m.finishedAt, sha256: m.sha256, schema: m.schemaVersion, seq: m.audit?.seq ?? null, hash: m.audit?.hash ?? null, verifiedAt: m.verified ? m.finishedAt : null })
+          insert.run({ id: m.id, kind: m.kind, path, size: m.sizeBytes, ok: m.verified ? 1 : 0, startedAt: m.startedAt, finishedAt: m.finishedAt, sha256: m.sha256, schema: m.schemaVersion, seq: m.audit?.seq ?? null, hash: m.audit?.hash ?? null, verifiedAt: m.verified ? m.finishedAt : null, jt: m.journal?.timeline ?? null, js: m.journal?.seq ?? null })
           added++
         }
       })
@@ -577,6 +617,173 @@ export class BackupService {
     if (!a) return null
     const live = this.db.prepare('SELECT hash FROM audit_log WHERE seq = ?').pluck().get(a.seq) as string | undefined
     return { ok: live === a.hash, seq: a.seq, at: a.at }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Point-in-time restore (Tier B/C, D38): snapshot of a timeline + its change journal
+  // ---------------------------------------------------------------------------
+
+  /** Verified backups whose files exist and that know their journal position. */
+  private bases(): BackupRow[] {
+    return (
+      this.db
+        .prepare(`SELECT * FROM backup_runs WHERE verified_at IS NOT NULL AND deleted_at IS NULL AND journal_timeline IS NOT NULL AND journal_seq IS NOT NULL AND finished_at IS NOT NULL ORDER BY finished_at`)
+        .all() as BackupRow[]
+    ).filter((r) => existsSync(r.path))
+  }
+
+  /**
+   * Restorable ranges, one per timeline: from its oldest usable base snapshot (the newest one taken
+   * before the 14-day window, when there is one — older segments are pruned) to the moment the
+   * timeline stopped being live (now, for the current one).
+   */
+  private pitrRanges(): { timeline: string; from: number; to: number }[] {
+    const j = this.opts.journal
+    if (!j?.isStarted) return []
+    const now = this.now()
+    const windowStart = now - JOURNAL_KEEP_DAYS * 86_400_000
+    const bases = this.bases()
+    const tls = j.timelines()
+    const out: { timeline: string; from: number; to: number }[] = []
+    tls.forEach((tl, i) => {
+      const own = bases.filter((b) => b.journal_timeline === tl.id)
+      if (!own.length) return
+      const before = own.filter((b) => b.finished_at! <= windowStart)
+      const from = before.length ? before[before.length - 1]!.finished_at! : own[0]!.finished_at!
+      const to = tl.id === j.timeline ? now : (tls[i + 1]?.createdAt ?? now)
+      if (from <= to) out.push({ timeline: tl.id, from, to })
+    })
+    return out
+  }
+
+  private pitrStatus(): PitrStatusDto | null {
+    const j = this.opts.journal
+    if (!j?.isStarted) return null
+    const s = j.status()
+    return {
+      ranges: this.pitrRanges().map(({ from, to }) => ({ from, to })),
+      keepDays: JOURNAL_KEEP_DAYS,
+      intervalSec: JOURNAL_SHIP_INTERVAL_MS / 1000,
+      pendingRows: s.pendingRows,
+      lastShippedAt: s.lastShippedAt,
+      offsite: s.offsite,
+      error: s.error,
+      bytes: s.bytes,
+    }
+  }
+
+  /** A new timeline needs a snapshot to replay from: taken at start and retried by the minute tick. */
+  async ensureJournalBase(): Promise<BackupDto | null> {
+    const j = this.opts.journal
+    if (!j?.isStarted || !this.available || this.busy || !this.org.firstBranch()) return null
+    if (this.bases().some((b) => b.journal_timeline === j.timeline)) return null
+    try {
+      return await this.run('snapshot', null)
+    } catch {
+      return null // recorded in backup_runs + audit_log; retried next minute
+    }
+  }
+
+  /** Builds the database as it was at `at` into a new file next to the app data (the live DB is untouched). */
+  private pitrBuild(at: number): { file: string; base: BackupRow; info: FileInspection; changes: number; appliedUntil: number } {
+    const j = this.opts.journal
+    const { backupDir } = this.paths()
+    if (!j?.isStarted) throw new AppError('PITR_UNAVAILABLE')
+    if (this.busy) throw new AppError('BACKUP_BUSY')
+    j.ship() // everything captured so far goes to the files first
+    if (j.status().pendingRows > 0) throw new AppError('PITR_UNAVAILABLE', { reason: 'ship' })
+    const range = this.pitrRanges().find((r) => at >= r.from && at <= r.to)
+    if (!range) throw new AppError('PITR_OUT_OF_RANGE')
+    const base = this.bases()
+      .filter((b) => b.journal_timeline === range.timeline && b.finished_at! <= at)
+      .pop()
+    if (!base) throw new AppError('PITR_OUT_OF_RANGE')
+    this.verifiedFile(base.id)
+
+    this.busy = true
+    const dir = join(dirname(backupDir), 'restore')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, `pitr-${fileStamp(at)}-${uuidv7(this.now()).slice(-6)}.sqlite`)
+    try {
+      copyFileSync(base.path, file)
+      const target = new Database(file)
+      let r: ReturnType<JournalService['replay']>
+      try {
+        r = j.replay(target, range.timeline, base.journal_seq!, at)
+        if ((target.pragma('foreign_key_check') as unknown[]).length) throw new AppError('JOURNAL_CORRUPT', { reason: 'foreign_key_check' })
+      } finally {
+        target.close()
+      }
+      const info = inspectFile(file)
+      if (!info.integrityOk || !info.audit.ok) throw new AppError('BACKUP_INVALID', { reason: 'pitr' })
+      return { file, base, info, changes: r.applied, appliedUntil: r.lastAt ?? base.finished_at! }
+    } catch (err) {
+      rmQuiet(file)
+      throw err
+    } finally {
+      this.busy = false
+    }
+  }
+
+  /** Bills in the live data that the restored file does not have (what a replace would lose). */
+  private lostSince(file: string): { bills: number; satang: number } {
+    this.db.prepare('ATTACH DATABASE ? AS pitr').run(file)
+    try {
+      const r = this.db.prepare('SELECT count(*) AS n, coalesce(sum(total_satang), 0) AS s FROM main.bills WHERE id NOT IN (SELECT id FROM pitr.bills)').get() as { n: number; s: number }
+      return { bills: r.n, satang: r.s }
+    } finally {
+      this.db.exec('DETACH DATABASE pitr')
+    }
+  }
+
+  /** Point-in-time step 1: a verified copy at `at`, plus what the current data has beyond it. */
+  pitrCopy(actor: Actor, at: number): PitrInspectDto {
+    const b = this.pitrBuild(at)
+    const lost = this.lostSince(b.file)
+    this.db
+      .transaction(() => {
+        this.audit.append({ action: 'backup.pitr_copy', permission: 'backup:restore', userId: actor.userId, branchId: actor.branchId, entity: 'backup', entityId: b.base.id, after: { pointInTime: at, appliedUntil: b.appliedUntil, changes: b.changes, copy: b.file }, risk: 'medium' })
+      })
+      .immediate()
+    return {
+      backupId: b.base.id,
+      path: b.file,
+      sizeBytes: statSync(b.file).size,
+      schemaVersion: b.info.schemaVersion,
+      auditCount: b.info.audit.count,
+      auditOk: b.info.audit.ok,
+      bills: b.info.bills,
+      lastBillAt: b.info.lastBillAt,
+      users: b.info.users,
+      pointInTime: at,
+      appliedUntil: b.appliedUntil,
+      changes: b.changes,
+      baseStartedAt: b.base.started_at,
+      lostBills: lost.bills,
+      lostSalesSatang: lost.satang,
+    }
+  }
+
+  /**
+   * Point-in-time step 2: rebuilds the same point (deterministic), backs up the current state, and
+   * stages the file for the swap at the next start.
+   */
+  async pitrReplace(actor: Actor, at: number): Promise<PendingRestore> {
+    const { dbPath } = this.paths()
+    this.db
+      .transaction(() => {
+        this.audit.append({ action: 'backup.restore_requested', permission: 'backup:restore', userId: actor.userId, branchId: actor.branchId, entity: 'backup', after: { pointInTime: at }, risk: 'high' })
+      })
+      .immediate()
+    const b = this.pitrBuild(at)
+    try {
+      const pre = await this.run('pre_restore', actor)
+      renameSync(b.file, pendingPaths(dbPath).file)
+      return this.writePending(actor, b.base, pre, { pointInTime: at, appliedUntil: b.appliedUntil })
+    } catch (err) {
+      rmQuiet(b.file)
+      throw err
+    }
   }
 
   private branchId(actor: Actor | null): string | null {
