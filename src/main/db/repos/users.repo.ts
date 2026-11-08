@@ -127,6 +127,8 @@ export class UsersRepo {
         | 'role_id'
         | 'username'
         | 'display_name'
+        | 'email'
+        | 'phone'
         | 'pin_hash'
         | 'active'
         | 'must_change_password'

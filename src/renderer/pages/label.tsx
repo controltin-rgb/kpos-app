@@ -541,7 +541,7 @@ export function LabelPage() {
           <span style={{ ...statusBase, background: status.bg, color: status.fg }}>{status.text}</span>
         </div>
         <div
-          className="box-border grid content-start bg-white p-[27px] shadow-[0_12px_34px_rgba(40,30,60,0.18)]"
+          className="keep-light box-border grid content-start bg-white p-[27px] shadow-[0_12px_34px_rgba(40,30,60,0.18)]"
           style={{ width: 560, height: 792, gridTemplateColumns: `repeat(${sz.cols}, ${pv.cw}px)`, gridAutoRows: `${pv.ch}px` }}
         >
           {cells.map(({ p, c }, i) => (

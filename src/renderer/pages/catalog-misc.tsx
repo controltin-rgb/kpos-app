@@ -29,7 +29,7 @@ export function CategoriesPage() {
   const confirm = useConfirm()
   const c = t.categories
   const [items, setItems] = useState<CategoryDto[]>([])
-  const [draft, setDraft] = useState<{ id?: string; name: string; kdsStation: string; sortOrder: string } | null>(null)
+  const [draft, setDraft] = useState<{ id?: string; name: string; kdsStation: string; skuPrefix: string; sortOrder: string } | null>(null)
   const editable = can('products:update')
 
   const load = useCallback(() => call('catalog.categories').then(setItems, (err: unknown) => toast(errorMessage(err), 'error')), [toast])
@@ -44,10 +44,10 @@ export function CategoriesPage() {
   async function save() {
     if (!draft) return
     try {
-      const saved = await call('catalog.saveCategory', { ...(draft.id ? { id: draft.id } : {}), name: draft.name, kdsStation: draft.kdsStation || null, sortOrder: Number(draft.sortOrder) || 0 })
+      const saved = await call('catalog.saveCategory', { ...(draft.id ? { id: draft.id } : {}), name: draft.name, kdsStation: draft.kdsStation || null, skuPrefix: draft.skuPrefix || null, sortOrder: Number(draft.sortOrder) || 0 })
       toast(t.crud.saved)
       await load()
-      setDraft({ id: saved.id, name: saved.name, kdsStation: saved.kdsStation ?? '', sortOrder: String(saved.sortOrder) })
+      setDraft({ id: saved.id, name: saved.name, kdsStation: saved.kdsStation ?? '', skuPrefix: saved.skuPrefix ?? '', sortOrder: String(saved.sortOrder) })
     } catch (err) {
       toast(errorMessage(err), 'error')
     }
@@ -66,11 +66,11 @@ export function CategoriesPage() {
 
   return (
     <>
-      <PageHeader icon="cup" tone="pink" title={c.title} subtitle={c.subtitle} actions={editable && <GradientButton onClick={() => setDraft({ name: '', kdsStation: 'bar', sortOrder: String(items.length) })}>{c.add}</GradientButton>} />
+      <PageHeader icon="cup" tone="pink" title={c.title} subtitle={c.subtitle} actions={editable && <GradientButton onClick={() => setDraft({ name: '', kdsStation: 'bar', skuPrefix: '', sortOrder: String(items.length) })}>{c.add}</GradientButton>} />
       <div className="flex flex-wrap items-start gap-[18px]">
         <Card className="flex min-w-0 flex-[1_1_420px] flex-col gap-1.5">
           {items.map((it) => (
-            <div key={it.id} role="listitem" className={rowCls(it.id === draft?.id)} onClick={() => setDraft({ id: it.id, name: it.name, kdsStation: it.kdsStation ?? '', sortOrder: String(it.sortOrder) })}>
+            <div key={it.id} role="listitem" className={rowCls(it.id === draft?.id)} onClick={() => setDraft({ id: it.id, name: it.name, kdsStation: it.kdsStation ?? '', skuPrefix: it.skuPrefix ?? '', sortOrder: String(it.sortOrder) })}>
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="text-[15px] font-semibold">{it.name}</span>
                 <span className="text-xs text-muted-foreground">
@@ -97,6 +97,9 @@ export function CategoriesPage() {
                     </option>
                   ))}
                 </SelectInput>
+              </Field>
+              <Field label={c.skuPrefix} hint={c.skuPrefixHint(draft.skuPrefix || 'P')}>
+                <TextInput value={draft.skuPrefix} maxLength={6} placeholder="P" disabled={!editable} onChange={(e) => setDraft({ ...draft, skuPrefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') })} />
               </Field>
               <Field label={c.sort}>
                 <TextInput inputMode="numeric" value={draft.sortOrder} disabled={!editable} onChange={(e) => setDraft({ ...draft, sortOrder: e.target.value.replace(/\D/g, '') })} />

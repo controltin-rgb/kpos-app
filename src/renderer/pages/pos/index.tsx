@@ -398,7 +398,7 @@ export function PosPage() {
             label={p.orderType}
             value={orderType}
             onChange={setOrderType}
-            options={(['dine_in', 'takeaway', 'delivery'] as const).map((v) => ({ value: v, label: t.orderTypes[v] }))}
+            options={(catalog?.deliveryEnabled === false ? (['dine_in', 'takeaway'] as const) : (['dine_in', 'takeaway', 'delivery'] as const)).map((v) => ({ value: v, label: t.orderTypes[v] }))}
           />
           {orderType === 'delivery' && (
             <div className="grid grid-cols-2 gap-2">

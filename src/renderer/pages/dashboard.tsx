@@ -56,7 +56,7 @@ function Summary({ icon, tone, circle, title, children }: { icon: IconName; tone
 
 /** docs/design/Dashboard.dc.html (confirmed design) with live data. */
 export function DashboardPage() {
-  const { user } = useSession()
+  const { user, system } = useSession()
   const navigate = useNavigate()
   const [period, setPeriod] = useState<DashboardPeriod>('today')
   const [data, setData] = useState<DashboardDto | null>(null)
@@ -177,12 +177,14 @@ export function DashboardPage() {
             <span className="rounded-xl bg-[#FFEBCC] px-2.5 py-[3px] text-[#7A4A00]">{d.exp7(data.stock.exp7Count)}</span>
           </div>
         </Summary>
+        {system?.deliveryEnabled !== false && (
         <Summary icon="truck" tone="blue" circle="#E4EEFF" title={d.delivery}>
           <div className="relative text-[32px] leading-[1.1] font-bold">
             <span>{deliveries}</span> <span className="text-[15px] font-medium text-muted-foreground">{d.orders}</span>
           </div>
           <div className="relative text-[13px] text-muted-foreground">{d.deliverySub(data.deliveries.grab, data.deliveries.lineman, data.deliveries.shopeefood, data.deliveries.foodpanda)}</div>
         </Summary>
+        )}
         <Summary icon="clock" tone="teal" circle="#D9F4F1" title={d.shift}>
           <div className="relative text-[32px] leading-[1.1] font-bold">{data.shift ? money(data.shift.expectedCashSatang).replace(/\.\d\d$/, '') : '—'}</div>
           <div className="relative text-[13px] text-muted-foreground">

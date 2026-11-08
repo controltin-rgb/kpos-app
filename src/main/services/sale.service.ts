@@ -71,6 +71,7 @@ export class SaleService {
     }
     if ((input.orderType === 'delivery') !== (input.channel !== null)) throw new AppError('INVALID_INPUT', { fields: { channel: ['required for delivery only'] } })
     if (input.payment.method === 'delivery' && input.orderType !== 'delivery') throw new AppError('PAYMENT_INVALID')
+    if (input.orderType === 'delivery' && !this.settings.get('sales.delivery_enabled')) throw new AppError('DELIVERY_DISABLED')
 
     const vatRateBp = this.settings.get('vat.rate_bp')
     const lines = input.items.map((i) => this.price(actor.branchId, i))

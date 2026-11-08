@@ -11,6 +11,8 @@ export interface NavLeaf {
   /** phase in docs/Implement.md §10 where the page is built (for placeholders) */
   phase: number
   breadcrumb?: string
+  /** shown only while this shop feature is on (SystemInfo) */
+  feature?: 'delivery'
 }
 
 export interface NavItem extends Partial<NavLeaf> {
@@ -69,7 +71,7 @@ export const NAV: NavItem[] = [
     icon: 'chart',
     tone: 'blue',
     children: [
-      { path: '/reports', label: n.reports, permission: 'reports:view', phase: 3 },
+      { path: '/reports', label: n.reports, permission: 'reports:view', phase: 3, feature: 'delivery' },
       { path: '/z-report', label: n.zReport, permission: 'reports:view', phase: 3 },
       { path: '/delivery-commission', label: n.deliveryCommission, permission: 'reports:view', phase: 3 },
     ],
@@ -101,6 +103,10 @@ export const NAV: NavItem[] = [
 ]
 
 /** All leaf routes with their metadata. */
-export const ROUTES: NavLeaf[] = NAV.flatMap((i) =>
-  i.children ?? [{ path: i.path!, label: i.label, permission: i.permission ?? null, phase: i.phase ?? 1, ...(i.breadcrumb ? { breadcrumb: i.breadcrumb } : {}) }],
-)
+export const ROUTES: NavLeaf[] = [
+  ...NAV.flatMap((i) =>
+    i.children ?? [{ path: i.path!, label: i.label, permission: i.permission ?? null, phase: i.phase ?? 1, ...(i.breadcrumb ? { breadcrumb: i.breadcrumb } : {}) }],
+  ),
+  // reached from the header user menu, not the sidebar
+  { path: '/account', label: t.account.title, permission: null, phase: 4 },
+]

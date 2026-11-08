@@ -30,6 +30,7 @@ type Draft = Pick<
   | 'tax.seller_branch'
   | 'tax.seller_address'
   | 'kds.complete_on_pay'
+  | 'sales.delivery_enabled'
   | 'promptpay.verify_mode'
   | 'promptpay.provider'
   | 'promptpay.merchant_id'
@@ -51,6 +52,7 @@ const DRAFT_KEYS: (keyof Draft)[] = [
   'tax.seller_branch',
   'tax.seller_address',
   'kds.complete_on_pay',
+  'sales.delivery_enabled',
   'promptpay.verify_mode',
   'promptpay.provider',
   'promptpay.merchant_id',
@@ -62,7 +64,7 @@ const DRAFT_KEYS: (keyof Draft)[] = [
 
 /** docs/design/Settings.dc.html (draft) — sections available in phase 2. */
 export function SettingsPage() {
-  const { can, system } = useSession()
+  const { can, system, refresh } = useSession()
   const toast = useToast()
   const [params] = useSearchParams()
   const [tab, setTab] = useState<Tab>(() => {
@@ -127,6 +129,8 @@ export function SettingsPage() {
       setDraft(s)
       setVatText(String(s['vat.rate_bp'] / 100))
       toast(st.saved)
+      // menus follow shop features (delivery) from system.info
+      if ('sales.delivery_enabled' in patch) void refresh()
     } catch (err) {
       toast(errorMessage(err), 'error')
     } finally {
@@ -215,6 +219,18 @@ export function SettingsPage() {
             <TextInput inputMode="numeric" value={draft['promptpay.id']} disabled={!editable} maxLength={20} onChange={(e) => set('promptpay.id', e.target.value)} />
           </Field>
           <span className="rounded-xl bg-accent px-3 py-2 text-[13px] text-accent-foreground">{st.ppManual}</span>
+        </Card>
+      )}
+      {tab === 'payment' && (
+        <Card className="flex max-w-3xl flex-col gap-3">
+          <h2 className="m-0 text-lg font-bold">{t.deliverySetting.title}</h2>
+          <div className="flex min-h-12 items-center justify-between gap-3">
+            <span className="flex flex-col text-[15px]">
+              {t.deliverySetting.enabled}
+              <span className="text-xs text-muted-foreground">{t.deliverySetting.hint}</span>
+            </span>
+            <Toggle checked={draft['sales.delivery_enabled']} label={t.deliverySetting.enabled} disabled={!editable} onChange={(v) => set('sales.delivery_enabled', v)} />
+          </div>
         </Card>
       )}
       {tab === 'payment' && <PayVerifyCard draft={draft} set={set} editable={editable} endpointOk={endpointOk} />}

@@ -8,10 +8,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { t } from '@renderer/i18n'
 import { initials } from '@renderer/lib/format'
 import { useSession } from '@renderer/lib/session'
+import { useTheme, type ThemePref } from '@renderer/lib/theme'
 import { cn } from '@renderer/lib/utils'
 import { Icon } from './icons'
 import { NAV, ROUTES, type NavItem } from './nav'
-import { GRADIENTS, IconTile, useToast } from './ui'
+import { GRADIENTS, IconTile } from './ui'
 
 const itemBase = 'flex min-h-12 items-center gap-3 rounded-[14px] px-2.5 text-sm no-underline'
 
@@ -37,7 +38,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 function Sidebar({ pathname }: { pathname: string }) {
   const { can, user, system } = useSession()
   const visible = (p: NavItem['permission']) => p === null || p === undefined || can(p)
-  const items = NAV.map((i) => (i.children ? { ...i, children: i.children.filter((c) => visible(c.permission)) } : i)).filter(
+  const featureOn = (f: NavItem['feature']) => f !== 'delivery' || system?.deliveryEnabled !== false
+  const items = NAV.map((i) => (i.children ? { ...i, children: i.children.filter((c) => visible(c.permission) && featureOn(c.feature)) } : i)).filter(
     (i) => (i.children ? i.children.length > 0 : visible(i.permission)),
   )
   // groups are collapsed by default; the group containing the current page starts open
@@ -124,8 +126,6 @@ function Sidebar({ pathname }: { pathname: string }) {
     </nav>
   )
 }
-
-type Theme = 'light' | 'auto' | 'dark'
 
 const NOTE_STYLE: Record<NotificationDto['kind'], { icon: string; g: string }> = {
   low_stock: { icon: '!', g: '#F4616A, #DC3A44' },
@@ -235,24 +235,16 @@ function Bell({ open, onToggle, onClose, popClass, arrow }: { open: boolean; onT
 function Header({ onToggleNav, title }: { onToggleNav: () => void; title: string }) {
   const { user, logout } = useSession()
   const navigate = useNavigate()
-  const toast = useToast()
   const [panel, setPanel] = useState<'bell' | 'user' | null>(null)
-  const [theme, setTheme] = useState<Theme>('light')
+  const [theme, setTheme] = useTheme()
   const h = t.header
 
-  const pickTheme = (k: Theme) => {
-    if (k !== 'light') {
-      toast(h.themeDarkSoon, 'info')
-      return
-    }
-    setTheme(k)
-  }
-  const themeBtn = (k: Theme, label: string, icon: 'sun' | 'monitor' | 'moon') => (
+  const themeBtn = (k: ThemePref, label: string, icon: 'sun' | 'monitor' | 'moon') => (
     <button
       type="button"
       aria-label={label}
       aria-pressed={theme === k}
-      onClick={() => pickTheme(k)}
+      onClick={() => setTheme(k)}
       className="flex h-[38px] w-11 cursor-pointer items-center justify-center rounded-[19px] border-0"
       style={{ background: theme === k ? '#EDE9FB' : 'transparent' }}
     >
@@ -267,9 +259,9 @@ function Header({ onToggleNav, title }: { onToggleNav: () => void; title: string
     'absolute top-[58px] right-0 z-30 box-border flex max-w-[calc(100vw-32px)] flex-col gap-2.5 rounded-[22px] border border-border bg-white p-3.5 shadow-[0_18px_44px_rgba(40,30,60,0.2)]'
   const arrow = <div className="absolute -top-[7px] right-[18px] size-3.5 rotate-45 border-t border-l border-border bg-white" />
   const menuItems = [
-    { label: h.profile, g: GRADIENTS.violet, icon: '👤' },
-    { label: h.changePin, g: GRADIENTS.orange, icon: '🔑' },
-    { label: h.personalSettings, g: GRADIENTS.blue, icon: '⚙' },
+    { label: h.profile, g: GRADIENTS.violet, icon: '👤', tab: 'profile' },
+    { label: h.changePin, g: GRADIENTS.orange, icon: '🔑', tab: 'pin' },
+    { label: h.personalSettings, g: GRADIENTS.blue, icon: '⚙', tab: 'prefs' },
   ]
 
   return (
@@ -315,17 +307,15 @@ function Header({ onToggleNav, title }: { onToggleNav: () => void; title: string
         {panel === 'user' && (
           <div className={popClass} style={popover(300)}>
             {arrow}
-            <div className="relative flex items-center gap-3 rounded-2xl bg-[linear-gradient(135deg,#EDE9FB,#E3EEFE)] p-4">
-              <span
-                className="flex size-[52px] shrink-0 items-center justify-center rounded-full text-lg font-bold text-white shadow-[0_6px_14px_rgba(106,71,219,0.3)]"
-                style={{ background: GRADIENTS.violet }}
-              >
+            {/* plain profile row: theme colours only, readable in light and dark */}
+            <div className="relative flex items-center gap-3 rounded-2xl bg-accent px-3.5 py-3">
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-full text-base font-bold text-white" style={{ background: GRADIENTS.violet }}>
                 {initials(user?.displayName ?? '')}
               </span>
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="text-base font-bold">{user?.displayName}</span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-[15px] font-bold text-foreground">{user?.displayName}</span>
+                <span className="text-xs text-muted-foreground">{user?.roleName}</span>
                 <span className="text-xs text-muted-foreground">{user?.branchName}</span>
-                <span className="mt-0.5 self-start rounded-[10px] bg-white px-2.5 py-0.5 text-[11px] font-bold text-accent-foreground">{user?.roleName}</span>
               </span>
             </div>
             <div className="relative flex flex-col gap-0.5">
@@ -335,7 +325,7 @@ function Header({ onToggleNav, title }: { onToggleNav: () => void; title: string
                   type="button"
                   onClick={() => {
                     setPanel(null)
-                    toast(t.common.comingSoon, 'info')
+                    navigate(`/account?tab=${m.tab}`)
                   }}
                   className="box-border flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-[14px] border-0 bg-transparent px-2 text-sm text-foreground"
                 >

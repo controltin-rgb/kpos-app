@@ -30,6 +30,8 @@ export interface CategoryDto {
   icon: string | null
   color: string | null
   kdsStation: string | null
+  /** SKU prefix for auto codes (COF → COF-0001); null → "P" */
+  skuPrefix: string | null
   sortOrder: number
   productCount: number
 }
@@ -138,6 +140,8 @@ export interface PosCatalog {
   }[]
   groups: { id: string; name: string; minSelect: number; maxSelect: number; options: { id: string; name: string; priceSatang: number; isDefault: boolean }[] }[]
   vatRateBp: number
+  /** settings: sales.delivery_enabled */
+  deliveryEnabled: boolean
   branchName: string
   promptPayId: string
   device: { id: string; name: string }
@@ -269,6 +273,7 @@ export interface SettingsDto {
   'tax.seller_branch': string
   'tax.seller_address': string
   'kds.complete_on_pay': boolean
+  'sales.delivery_enabled': boolean
   'promptpay.verify_mode': PaymentVerifyMode
   'promptpay.provider': PaymentProvider
   'promptpay.merchant_id': string
@@ -358,6 +363,15 @@ const categoryInput = z.object({
   icon: optText(40),
   color: optText(20),
   kdsStation: optText(30),
+  /** '' or null → no prefix; letters are upper-cased */
+  skuPrefix: z
+    .string()
+    .trim()
+    .max(6)
+    .transform((v) => v.toUpperCase() || null)
+    .pipe(z.string().regex(/^[A-Z0-9]{1,6}$/).nullable())
+    .nullable()
+    .optional(),
   sortOrder: z.number().int().default(0),
 })
 
@@ -386,6 +400,8 @@ export const salesApi = {
   'catalog.categories': ep<CategoryDto[]>()('products:view', z.undefined()),
   'catalog.saveCategory': ep<CategoryDto>()('products:update', categoryInput.extend({ id: id.optional() })),
   'catalog.deleteCategory': ep<null>()('products:delete', z.object({ id })),
+  /** the code a new product gets when its SKU is left empty (preview; saving assigns it for real) */
+  'catalog.nextSku': ep<string>()('products:view', z.object({ categoryId: id.nullable() })),
   'catalog.products': ep<ProductDto[]>()('products:view', z.undefined()),
   'catalog.saveProduct': ep<ProductDto>()('products:update', productInput.extend({ id: id.optional() })),
   'catalog.deleteProduct': ep<null>()('products:delete', z.object({ id })),
@@ -504,6 +520,7 @@ export const salesApi = {
         'tax.seller_branch': z.string().trim().max(5),
         'tax.seller_address': z.string().trim().max(300),
         'kds.complete_on_pay': z.boolean(),
+        'sales.delivery_enabled': z.boolean(),
         'promptpay.verify_mode': z.enum(PAYMENT_VERIFY_MODES),
         'promptpay.provider': z.enum(PAYMENT_PROVIDERS),
         'promptpay.merchant_id': z.string().trim().max(80),

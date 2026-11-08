@@ -90,6 +90,7 @@ export const thCatalog = {
     tabBom: 'สูตร (BOM)',
     name: 'ชื่อสินค้า',
     sku: 'รหัสสินค้า (SKU)',
+    skuAuto: (s: string) => `เว้นว่าง = สร้างอัตโนมัติ (${s})`,
     barcode: 'บาร์โค้ด',
     category: 'หมวดสินค้า',
     kind: 'ประเภท',
@@ -136,6 +137,8 @@ export const thCatalog = {
     station: 'จอที่แสดงออเดอร์',
     stations: { bar: 'Bar (บาร์เครื่องดื่ม)', kitchen: 'Kitchen (ครัว)' },
     sort: 'ลำดับการแสดง',
+    skuPrefix: 'ตัวย่อรหัสสินค้า (SKU)',
+    skuPrefixHint: (p: string) => `A–Z / 0–9 ไม่เกิน 6 ตัว · สินค้าใหม่ในหมวดนี้จะได้รหัส ${p}-0001, ${p}-0002, … (ว่าง = P)`,
     count: (n: number) => `${n} สินค้า`,
   },
 

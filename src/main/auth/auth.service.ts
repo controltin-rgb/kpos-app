@@ -3,6 +3,7 @@ import { OrgRepo } from '@main/db/repos/org.repo'
 import { RolesRepo } from '@main/db/repos/roles.repo'
 import { UsersRepo, type UserWithRole } from '@main/db/repos/users.repo'
 import type { AuditService } from '@main/services/audit.service'
+import type { ProfileDto } from '@shared/api'
 import { AppError } from '@shared/errors'
 import { buildActor, type Actor } from './actor'
 import { authEmailFor, type Auth } from './better-auth'
@@ -158,6 +159,57 @@ export class AuthService {
       })
     }).immediate()
     return this.actorFor(this.users.findById(user.id)!)
+  }
+
+  // -------------------------------------------------------------------------
+  // own profile (header menu)
+  // -------------------------------------------------------------------------
+
+  profile(actor: Actor): ProfileDto {
+    const u = this.users.findById(actor.userId)
+    if (!u) throw new AppError('NOT_FOUND')
+    return {
+      userId: u.id,
+      username: u.username,
+      displayName: u.display_name,
+      email: u.email,
+      phone: u.phone,
+      roleName: u.role_name,
+      branchName: actor.branchName,
+      hasPin: u.pin_hash !== null,
+      lastLoginAt: u.last_login_at,
+      createdAt: u.created_at,
+    }
+  }
+
+  /** Name and contact details of the signed-in user; role, username and status stay with users:update. */
+  updateProfile(actor: Actor, input: { displayName: string; email: string | null; phone: string | null }): ProfileDto {
+    const at = this.now()
+    this.db.transaction(() => {
+      const u = this.users.findById(actor.userId)
+      if (!u) throw new AppError('NOT_FOUND')
+      if (input.email && this.db.prepare('SELECT 1 FROM users WHERE email = ? AND id <> ?').get(input.email, u.id)) throw new AppError('INVALID_INPUT', { fields: { email: ['duplicate'] } })
+      const before = { displayName: u.display_name, email: u.email, phone: u.phone }
+      const after = { displayName: input.displayName, email: input.email, phone: input.phone }
+      if (JSON.stringify(before) === JSON.stringify(after)) return
+      this.users.update(u.id, { display_name: input.displayName, email: input.email, phone: input.phone }, at)
+      this.audit.append({ action: 'auth.profile_update', userId: u.id, branchId: u.branch_id, entity: 'users', entityId: u.id, before, after, risk: 'low' })
+    }).immediate()
+    return this.profile(actor)
+  }
+
+  /** Sets the signed-in user's own PIN after re-checking their password (failures count towards lockout). */
+  async changeOwnPin(actor: Actor, currentPassword: string, newPin: string): Promise<ProfileDto> {
+    await this.verifyOwnPassword(actor, currentPassword)
+    const pinHash = hashPin(newPin)
+    const at = this.now()
+    this.db.transaction(() => {
+      const u = this.users.findById(actor.userId)
+      if (!u) throw new AppError('NOT_FOUND')
+      this.users.update(u.id, { pin_hash: pinHash, failed_login_count: 0 }, at)
+      this.audit.append({ action: 'auth.pin_change', userId: u.id, branchId: u.branch_id, entity: 'users', entityId: u.id, before: { hasPin: u.pin_hash !== null }, after: { hasPin: true }, risk: 'medium' })
+    }).immediate()
+    return this.profile(actor)
   }
 
   // -------------------------------------------------------------------------

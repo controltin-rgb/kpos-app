@@ -41,6 +41,8 @@ export const SETTINGS = {
   'backup.keep_daily': { schema: z.union([z.literal(14), z.literal(30), z.literal(90)]), default: 14 as 14 | 30 | 90 },
   'backup.offsite_enabled': { schema: z.boolean(), default: false },
   'backup.offsite_dir': { schema: z.string().trim().max(400), default: '' },
+  /** POS sells delivery orders (Grab, Lineman, …); shops without delivery switch it off (D45) */
+  'sales.delivery_enabled': { schema: z.boolean(), default: true },
   /** bar screen: a paid bill counts as served at once (no ticket waits on the KDS) — D40 */
   'kds.complete_on_pay': { schema: z.boolean(), default: true },
   /** PromptPay: manual confirm only, or also an automatic check through a provider (D41) */
@@ -68,7 +70,7 @@ export type SettingValue<K extends SettingKey> = z.infer<(typeof SETTINGS)[K]['s
 export type SettingsMap = { [K in SettingKey]: SettingValue<K> }
 
 /** Settings an operator may edit from the Settings page (license cap comes from the license file later). */
-export const EDITABLE_SETTINGS = ['vat.rate_bp', 'bill.reset_policy', 'promptpay.id', 'receipt.header', 'receipt.footer', 'receipt.paper_mm', 'stock.count_separate_approver', 'points.earn_every_satang', 'points.redeem_points', 'points.redeem_value_satang', 'tax.seller_name', 'tax.seller_tax_id', 'tax.seller_branch', 'tax.seller_address', 'backup.daily_time', 'backup.keep_daily', 'backup.offsite_enabled', 'backup.offsite_dir', 'lan.port', 'kds.complete_on_pay', 'promptpay.verify_mode', 'promptpay.provider', 'promptpay.merchant_id', 'promptpay.provider_branch', 'promptpay.provider_endpoint', 'update.feed_url', 'update.auto_check', 'cloud.enabled', 'cloud.endpoint', 'cloud.region', 'cloud.bucket', 'cloud.prefix', 'cloud.access_key_id'] as const
+export const EDITABLE_SETTINGS = ['vat.rate_bp', 'bill.reset_policy', 'promptpay.id', 'receipt.header', 'receipt.footer', 'receipt.paper_mm', 'stock.count_separate_approver', 'points.earn_every_satang', 'points.redeem_points', 'points.redeem_value_satang', 'tax.seller_name', 'tax.seller_tax_id', 'tax.seller_branch', 'tax.seller_address', 'backup.daily_time', 'backup.keep_daily', 'backup.offsite_enabled', 'backup.offsite_dir', 'lan.port', 'kds.complete_on_pay', 'sales.delivery_enabled', 'promptpay.verify_mode', 'promptpay.provider', 'promptpay.merchant_id', 'promptpay.provider_branch', 'promptpay.provider_endpoint', 'update.feed_url', 'update.auto_check', 'cloud.enabled', 'cloud.endpoint', 'cloud.region', 'cloud.bucket', 'cloud.prefix', 'cloud.access_key_id'] as const
 
 export class SettingsService {
   private readonly org: OrgRepo

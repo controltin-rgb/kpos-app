@@ -99,6 +99,18 @@ export function ProductsPage() {
   const [tab, setTab] = useState<'general' | 'bom'>('general')
   const [previewSize, setPreviewSize] = useState<string | null>(null)
   const [fields, setFields] = useState<Record<string, string>>({})
+  // preview of the automatic SKU for an empty field (the real code is assigned when saving)
+  const [nextSku, setNextSku] = useState<string | null>(null)
+  const skuEmpty = !!draft && !draft.sku.trim()
+  const skuCategory = draft?.categoryId || null
+  useEffect(() => {
+    if (!skuEmpty) return
+    let alive = true
+    call('catalog.nextSku', { categoryId: skuCategory }).then((v) => alive && setNextSku(v), () => {})
+    return () => {
+      alive = false
+    }
+  }, [skuEmpty, skuCategory])
   const [busy, setBusy] = useState(false)
   const editable = can('products:update')
 
@@ -311,7 +323,7 @@ export function ProductsPage() {
                   </Field>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label={pr.sku} error={fields['sku']}>
-                      <TextInput value={draft.sku} maxLength={40} disabled={!editable} onChange={(e) => upd({ sku: e.target.value })} />
+                      <TextInput value={draft.sku} maxLength={40} disabled={!editable} placeholder={nextSku ? pr.skuAuto(nextSku) : undefined} title={nextSku ? pr.skuAuto(nextSku) : undefined} onChange={(e) => upd({ sku: e.target.value })} />
                     </Field>
                     <Field label={pr.barcode}>
                       <TextInput value={draft.barcode} maxLength={40} disabled={!editable} onChange={(e) => upd({ barcode: e.target.value })} />

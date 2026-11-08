@@ -36,9 +36,11 @@ export interface SyncSnapshot {
     receiptHeader: string
     receiptFooter: string
     paperMm: 58 | 80
+    /** absent in snapshots from older Hosts → enabled */
+    deliveryEnabled?: boolean
   }
   /** what the POS screen shows (without the per-device fields) */
-  posCatalog: Omit<PosCatalog, 'vatRateBp' | 'promptPayId' | 'device' | 'branchName'>
+  posCatalog: Omit<PosCatalog, 'vatRateBp' | 'deliveryEnabled' | 'promptPayId' | 'device' | 'branchName'>
   /** pricing + BOM per product (shared/pricing.ts) */
   products: SaleableSnapshot[]
   /** automatic promotions (coupons are not available offline — D37) */

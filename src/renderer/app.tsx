@@ -31,6 +31,7 @@ import { AboutPage, ManualPage } from './pages/system'
 import { UsersPage } from './pages/users'
 import { AuditPage } from './pages/audit'
 import { BackupPage } from './pages/backup'
+import { AccountPage } from './pages/account'
 import { HostOfflinePage } from './pages/lan'
 
 /** Pages that exist so far; every other menu route shows a phase placeholder. */
@@ -59,6 +60,7 @@ const PAGES: Record<string, () => ReactNode> = {
   '/backup': () => <BackupPage />,
   '/system': () => <AboutPage />,
   '/manual': () => <ManualPage />,
+  '/account': () => <AccountPage />,
 }
 
 function Guarded({ route }: { route: NavLeaf }) {

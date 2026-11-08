@@ -112,7 +112,7 @@ export class OfflineSupport {
         case 'pos.catalog': {
           const u = this.user(win, 'pos:view')
           if (!snap) return fail('OFFLINE_NOT_READY')
-          const cat: PosCatalog = { ...snap.posCatalog, vatRateBp: snap.settings.vatRateBp, promptPayId: snap.settings.promptPayId, device: this.device, branchName: u.branchName }
+          const cat: PosCatalog = { ...snap.posCatalog, vatRateBp: snap.settings.vatRateBp, deliveryEnabled: snap.settings.deliveryEnabled ?? true, promptPayId: snap.settings.promptPayId, device: this.device, branchName: u.branchName }
           return ok(cat)
         }
         case 'pos.quote': {

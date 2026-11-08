@@ -75,6 +75,7 @@
     "license:keygen": "tsx scripts/license-keygen.ts",
     "license:issue": "tsx scripts/license-issue.ts",
     "license:tool": "tsx scripts/license-tool.ts",
+    "theme:dark": "node scripts/gen-dark-css.mjs",
     "icon": "electron scripts/render-icon.cjs",
     "smoke": "node scripts/smoke-packaged.mjs"
   }

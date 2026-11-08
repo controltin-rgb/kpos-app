@@ -7,6 +7,7 @@ export interface CategoryRow {
   icon: string | null
   color: string | null
   kds_station: string | null
+  sku_prefix: string | null
   sort_order: number
   deleted_at: number | null
 }
@@ -101,8 +102,8 @@ export class CatalogRepo {
   insertCategory(r: Omit<CategoryRow, 'deleted_at'> & { now: number }) {
     this.db
       .prepare(
-        `INSERT INTO categories (id, branch_id, name, icon, color, kds_station, sort_order, created_at, updated_at)
-         VALUES (@id, @branch_id, @name, @icon, @color, @kds_station, @sort_order, @now, @now)`,
+        `INSERT INTO categories (id, branch_id, name, icon, color, kds_station, sku_prefix, sort_order, created_at, updated_at)
+         VALUES (@id, @branch_id, @name, @icon, @color, @kds_station, @sku_prefix, @sort_order, @now, @now)`,
       )
       .run(r)
   }
@@ -122,6 +123,10 @@ export class CatalogRepo {
   }
   skuTaken(branchId: string, sku: string, exceptId: string | null): boolean {
     return !!this.db.prepare(`SELECT 1 FROM products WHERE branch_id = ? AND sku = ? AND ${live} AND id IS NOT ?`).get(branchId, sku, exceptId)
+  }
+  /** every SKU starting with `prefix` in the branch, deleted products included (codes are never reused) */
+  skusLike(branchId: string, prefix: string): string[] {
+    return this.db.prepare(`SELECT sku FROM products WHERE branch_id = ? AND sku IS NOT NULL AND substr(sku, 1, ?) = ?`).pluck().all(branchId, prefix.length, prefix) as string[]
   }
   insertProduct(r: Omit<ProductRow, 'deleted_at' | 'created_at' | 'updated_at' | 'image_path'> & { now: number }) {
     this.db

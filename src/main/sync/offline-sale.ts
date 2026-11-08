@@ -74,6 +74,7 @@ export function buildOfflineSale(
   const channel = input.channel ?? null
   if ((input.orderType === 'delivery') !== (channel !== null)) throw new AppError('INVALID_INPUT', { fields: { channel: ['required for delivery only'] } })
   if (input.payment.method === 'delivery' && input.orderType !== 'delivery') throw new AppError('PAYMENT_INVALID')
+  if (input.orderType === 'delivery' && snap.settings.deliveryEnabled === false) throw new AppError('DELIVERY_DISABLED')
   if (input.payment.method === 'promptpay' && !snap.settings.promptPayId) throw new AppError('PROMPTPAY_NOT_CONFIGURED')
 
   const p = priceCart(snap, input.items, input.excludedPromotionIds ?? [], ctx.now)

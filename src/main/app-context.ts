@@ -263,6 +263,7 @@ export function createAppContext(opts: AppContextOptions) {
       platform: v.platform,
       sqlite: sqliteVersion(db),
       schemaVersion: db.pragma('user_version', { simple: true }) as number,
+      deliveryEnabled: settings.get('sales.delivery_enabled'),
     }),
 
     'setup.status': () => setup.status(),
@@ -285,6 +286,10 @@ export function createAppContext(opts: AppContextOptions) {
     },
     'auth.changePassword': async (ctx, input) =>
       toSessionUser(await authService.changeOwnPassword(ctx.actor, input.currentPassword, input.newPassword)),
+
+    'profile.get': (ctx) => authService.profile(ctx.actor),
+    'profile.update': (ctx, input) => authService.updateProfile(ctx.actor, input),
+    'profile.changePin': (ctx, input) => authService.changeOwnPin(ctx.actor, input.currentPassword, input.newPin),
 
     'users.list': (ctx, input) => users.list(ctx.actor, input),
     'users.get': (ctx, input) => users.get(ctx.actor, input.id),
@@ -452,6 +457,7 @@ export function createAppContext(opts: AppContextOptions) {
     'catalog.deleteProduct': (ctx, input) => (catalog.deleteProduct(ctx.actor, input.id), null),
     'catalog.groups': (ctx) => catalog.groups(ctx.actor),
     'catalog.saveGroup': (ctx, input) => catalog.saveGroup(ctx.actor, input),
+    'catalog.nextSku': (ctx, input) => catalog.nextSku(ctx.actor, input.categoryId),
     'catalog.deleteGroup': (ctx, input) => (catalog.deleteGroup(ctx.actor, input.id), null),
 
     // ---- inventory --------------------------------------------------------
@@ -465,6 +471,7 @@ export function createAppContext(opts: AppContextOptions) {
     'pos.catalog': (ctx) => ({
       ...catalog.posCatalog(ctx.actor),
       vatRateBp: settings.get('vat.rate_bp'),
+      deliveryEnabled: settings.get('sales.delivery_enabled'),
       promptPayId: settings.get('promptpay.id'),
       device: { id: device.currentId(), name: device.currentName() },
       branchName: ctx.actor.branchName,
@@ -618,6 +625,9 @@ export function createAppContext(opts: AppContextOptions) {
     'members.search': (ctx, input) => promo.search(ctx.actor, input.phone),
     'members.list': (ctx, input) => promo.list(ctx.actor, input),
     'members.register': (ctx, input) => promo.register(ctx.actor, input),
+    'members.save': (ctx, input) => promo.save(ctx.actor, input),
+    'members.detail': (ctx, input) => promo.detail(ctx.actor, input.id, input.page, input.pageSize),
+    'members.revealContact': (ctx, input) => promo.revealContact(ctx.actor, input.id),
     'members.adjustPoints': (ctx, input) => promo.adjustPoints(ctx.actor, input.id, input.delta, input.reason),
     'members.erase': (ctx, input) => (promo.erase(ctx.actor, input.id, input.reason), null),
     'members.pointsRules': () => promo.pointsRules(),

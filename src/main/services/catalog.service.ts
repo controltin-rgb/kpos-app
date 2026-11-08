@@ -46,6 +46,7 @@ export class CatalogService {
       icon: c.icon,
       color: c.color,
       kdsStation: c.kds_station,
+      skuPrefix: c.sku_prefix,
       sortOrder: c.sort_order,
       productCount: this.repo.productsInCategory(c.id),
     }))
@@ -53,7 +54,7 @@ export class CatalogService {
 
   saveCategory(actor: Actor, input: ParsedInput<'catalog.saveCategory'>): CategoryDto {
     const at = this.now()
-    const row = { name: input.name, icon: input.icon ?? null, color: input.color ?? null, kds_station: input.kdsStation ?? null, sort_order: input.sortOrder }
+    const row = { name: input.name, icon: input.icon ?? null, color: input.color ?? null, kds_station: input.kdsStation ?? null, sku_prefix: input.skuPrefix ?? null, sort_order: input.sortOrder }
     let id = input.id
     this.db.transaction(() => {
       if (id) {
@@ -82,6 +83,24 @@ export class CatalogService {
   }
 
   // ---- products -----------------------------------------------------------
+
+  /**
+   * Next automatic SKU: <category prefix or "P">-<running number, 4+ digits> (D47).
+   * Numbers are never reused, even after a product is deleted. Call inside the write transaction.
+   */
+  nextSku(actor: Pick<Actor, 'branchId'>, categoryId: string | null): string {
+    const c = categoryId ? this.repo.category(categoryId) : undefined
+    const prefix = `${(c?.branch_id === actor.branchId && c.sku_prefix) || 'P'}-`
+    let max = 0
+    for (const sku of this.repo.skusLike(actor.branchId, prefix)) {
+      const m = /^(\d+)$/.exec(sku.slice(prefix.length))
+      if (m) max = Math.max(max, Number(m[1]))
+    }
+    for (let n = max + 1; ; n++) {
+      const sku = `${prefix}${String(n).padStart(4, '0')}`
+      if (!this.repo.skuTaken(actor.branchId, sku, null)) return sku
+    }
+  }
 
   products(actor: Pick<Actor, 'branchId'>, vatRateBp = 0): ProductDto[] {
     const products = this.repo.products(actor.branchId)
@@ -137,7 +156,8 @@ export class CatalogService {
       const before = id ? this.snapshot(actor, id) : null
       const row = {
         category_id: input.categoryId ?? null,
-        sku: input.sku ?? null,
+        // empty SKU → automatic code (inside the transaction, so two tills never get the same number)
+        sku: input.sku ?? this.nextSku(actor, input.categoryId ?? null),
         barcode: input.barcode ?? null,
         name: input.name,
         kind: input.kind,
@@ -267,7 +287,7 @@ export class CatalogService {
 
   // ---- POS ----------------------------------------------------------------
 
-  posCatalog(actor: Pick<Actor, 'branchId'>): Omit<PosCatalog, 'vatRateBp' | 'promptPayId' | 'device' | 'branchName'> {
+  posCatalog(actor: Pick<Actor, 'branchId'>): Omit<PosCatalog, 'vatRateBp' | 'deliveryEnabled' | 'promptPayId' | 'device' | 'branchName'> {
     const products = this.products(actor).filter((p) => p.active)
     const stockOut = new Set(
       this.stock

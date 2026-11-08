@@ -116,6 +116,7 @@ export class SyncHostService {
         receiptHeader: this.settings.get('receipt.header'),
         receiptFooter: this.settings.get('receipt.footer'),
         paperMm: this.settings.get('receipt.paper_mm'),
+        deliveryEnabled: this.settings.get('sales.delivery_enabled'),
       },
       posCatalog: this.catalog.posCatalog({ branchId }),
       products: this.catalog.saleSnapshots(branchId),

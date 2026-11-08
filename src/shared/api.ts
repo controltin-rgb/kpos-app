@@ -53,6 +53,20 @@ const pageSchema = z.object({
 // DTOs
 // ---------------------------------------------------------------------------
 
+/** "My profile" in the header menu: the signed-in user's own account. */
+export interface ProfileDto {
+  userId: string
+  username: string
+  displayName: string
+  email: string | null
+  phone: string | null
+  roleName: string
+  branchName: string
+  hasPin: boolean
+  lastLoginAt: number | null
+  createdAt: number
+}
+
 export interface SessionUser {
   userId: string
   username: string
@@ -83,6 +97,8 @@ export interface SystemInfo {
   sqlite: string
   schemaVersion: number
   platform: string
+  /** settings: sales.delivery_enabled (menus and POS hide delivery when off) */
+  deliveryEnabled: boolean
 }
 
 export interface SetupStatus {
@@ -182,6 +198,19 @@ export const api = {
     'authenticated',
     z.object({ currentPassword: z.string().min(1).max(128), newPassword: passwordSchema }),
   ),
+
+  // ---- own account (header menu) — any signed-in user, for themselves only
+  'profile.get': ep<ProfileDto>()('authenticated', z.undefined()),
+  'profile.update': ep<ProfileDto>()(
+    'authenticated',
+    z.object({
+      displayName: displayNameSchema,
+      email: z.string().trim().max(120).transform((v) => v || null).pipe(z.string().email().nullable()),
+      phone: z.string().trim().max(20).transform((v) => v || null).pipe(z.string().regex(/^0\d{8,9}$/).nullable()),
+    }),
+  ),
+  /** Own PIN (POS quick switch / approvals). The account password proves it is really them. */
+  'profile.changePin': ep<ProfileDto>()('authenticated', z.object({ currentPassword: z.string().min(1).max(128), newPin: pinSchema })),
 
   'users.list': ep<UserList>()(
     'users:view',
