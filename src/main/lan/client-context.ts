@@ -12,6 +12,8 @@ import type { HostConnection } from './host-connection'
 import type { ClientStore } from '@main/sync/client-store'
 import { ClientSync } from '@main/sync/client-sync'
 import { isOfflineError, OfflineSupport } from '@main/sync/offline-support'
+import type { UpdaterPort } from '@main/updater'
+import type { UpdateStatusDto } from '@shared/api-system'
 
 export interface ClientContextOptions {
   conn: HostConnection
@@ -29,6 +31,10 @@ export interface ClientContextOptions {
   /** local queue for selling while the Host is down (D36); absent = online only */
   store?: ClientStore
   now?: () => number
+  /** this machine's own auto-update (D42); the feed URL comes from the Host settings */
+  updater?: UpdaterPort
+  /** called with the Host's feed settings whenever update.status is answered */
+  setUpdateFeed?: (feedUrl: string, autoCheck: boolean) => void
 }
 
 const fail = (code: ErrorCode, data?: Record<string, unknown>): Envelope<never> => ({ ok: false, error: { code, ...(data ? { data } : {}) } })
@@ -172,6 +178,26 @@ export function createClientContext(opts: ClientContextOptions) {
             ok: true,
             data: { ...base, deviceRole: 'client', deviceName: opts.device.name, hostName: conn.cfg.hostName, hostConnected: host.ok, offlinePending: opts.store?.counts().pending ?? null, appVersion: v.app, electron: v.electron, node: v.node, chrome: v.chrome, platform: v.platform },
           }
+        }
+        // every machine installs its own update; the Host only tells where the files are
+        case 'update.status': {
+          const host = await forward(sender, channel, input)
+          if (host.ok) {
+            const h = host.data as UpdateStatusDto
+            opts.setUpdateFeed?.(h.feedUrl, h.autoCheck)
+          }
+          if (!opts.updater) return host
+          return { ok: true, data: opts.updater.status() }
+        }
+        case 'update.check':
+        case 'update.install': {
+          if (!opts.updater) return forward(sender, channel, input)
+          if (!(await can(sender, 'settings:update'))) return fail('FORBIDDEN')
+          if (channel === 'update.install') {
+            setTimeout(() => opts.updater?.install(), 300)
+            return { ok: true, data: null }
+          }
+          return { ok: true, data: await opts.updater.check() }
         }
         case 'expenses.pickReceipt': {
           const file = await opts.pickFile?.()

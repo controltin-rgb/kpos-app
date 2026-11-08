@@ -23,6 +23,11 @@ import { EVENT_CHANNEL } from '@shared/api'
 import { JOURNAL_SHIP_INTERVAL_MS } from '@shared/api-system'
 import type { JournalService } from '@main/backup/journal'
 import { preUpdateBackup, recordAppVersion } from '@main/backup/pre-update'
+import { applyPendingReset, finishReset } from '@main/backup/reset'
+import { FileSecretStore } from '@main/secrets'
+import { createUpdater, type AutoUpdaterLike, type UpdaterPort } from '@main/updater'
+import { CLOUD_SYNC_INTERVAL_MIN } from '@shared/api-system'
+import { EventEmitter } from 'node:events'
 
 const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
 
@@ -196,9 +201,25 @@ function startClient(device: LocalDevice, cfg: HostConfig, deviceFile: string) {
   } catch (err) {
     console.error('[sync] offline store unavailable — online only:', err)
   }
+  let feed = { url: '', autoCheck: false }
+  const updater = createUpdater({
+    currentVersion: app.getVersion(),
+    feedUrl: () => feed.url,
+    autoCheck: () => feed.autoCheck,
+    onChange: (status) => ctx.events.emit('event', { type: 'update.state', status }),
+    load: async () => (app.isPackaged && (process.platform !== 'linux' || !!process.env['APPIMAGE']) ? ((await import('electron-updater')).autoUpdater as unknown as AutoUpdaterLike) : null),
+    canInstall: process.platform !== 'darwin',
+    log: (m, e) => console.error(m, e),
+  })
   const ctx: ClientContext = createClientContext({
     conn: new HostConnection(cfg),
     device,
+    updater,
+    setUpdateFeed: (url, autoCheck) => {
+      const first = !feed.url && !!url
+      feed = { url, autoCheck }
+      if (first && autoCheck) void updater.check()
+    },
     ...(store ? { store } : {}),
     versions: versions(),
     ...native,
@@ -269,6 +290,12 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('[backup] applying staged restore failed:', err)
   }
+  // "Reset database" (Super Admin): the old file is removed before anything opens it
+  try {
+    if (applyPendingReset(paths.dbPath)) console.info('[system] database reset applied')
+  } catch (err) {
+    console.error('[system] database reset failed:', err)
+  }
   // D39: the first start of a new version copies the database before migrations or new code touch it
   let preUpdate: string | null = null
   try {
@@ -289,9 +316,26 @@ app.whenReady().then(async () => {
     return
   }
 
+  // D42: auto-update — its events reach the windows through the same event bus as the context
+  const updateEvents = new EventEmitter()
+  let settingsForUpdate: AppContext['settings'] | null = null
+  const updater: UpdaterPort = createUpdater({
+    currentVersion: app.getVersion(),
+    feedUrl: () => settingsForUpdate?.get('update.feed_url') ?? '',
+    autoCheck: () => settingsForUpdate?.get('update.auto_check') ?? false,
+    onChange: (status) => updateEvents.emit('event', { type: 'update.state', status }),
+    // in-place update works for the NSIS installer and AppImage; not in dev, not for tar.gz
+    load: async () =>
+      app.isPackaged && (process.platform !== 'linux' || !!process.env['APPIMAGE']) ? ((await import('electron-updater')).autoUpdater as unknown as AutoUpdaterLike) : null,
+    canInstall: process.platform !== 'darwin', // Squirrel.Mac needs a signed app (code signing not done yet)
+    log: (m, e) => console.error(m, e),
+  })
+
   const ctx: AppContext = createAppContext({
     db,
     device,
+    secrets: new FileSecretStore(join(userData, 'secrets'), secretBox),
+    updater,
     ...native,
     receiptsDir: join(userData, 'receipts'),
     openWindow: (kind, senderId) =>
@@ -327,11 +371,25 @@ app.whenReady().then(async () => {
     if (preMigrateBackup) ctx.backup.registerExisting(preMigrateBackup, 'pre_migrate')
     recordAppVersion(paths.dbPath, app.getVersion())
     ctx.backup.completeRestore(restore)
+    if (finishReset(db, paths.dbPath, ctx.audit, Date.now())) ctx.license.invalidate()
   } catch (err) {
     console.error('[backup] startup bookkeeping failed:', err)
   }
+  settingsForUpdate = ctx.settings
+  forwardEvents(updateEvents)
+  if (ctx.settings.get('update.auto_check')) setTimeout(() => void updater.check(), 20_000)
+  setInterval(() => ctx.settings.get('update.auto_check') && void updater.check(), 6 * 3_600_000).unref()
+  // D43: encrypted cloud copy every few minutes (only when switched on, licensed and configured)
+  const cloudTick = () => void ctx.cloudSync(false).catch((err: unknown) => console.error('[cloud] sync failed:', err instanceof Error ? err.message : err))
+  setInterval(cloudTick, CLOUD_SYNC_INTERVAL_MIN * 60_000).unref()
   // D25: daily snapshot — checked every minute; a snapshot missed while the app was closed runs soon after start
-  const backupTick = () => void ctx.backup.runDueSnapshot().then(() => ctx.backup.ensureJournalBase())
+  const backupTick = () =>
+    void ctx.backup
+      .runDueSnapshot()
+      .then(async (snap) => {
+        await ctx.backup.ensureJournalBase()
+        if (snap) cloudTick() // a new snapshot goes to the cloud right away
+      })
   setTimeout(backupTick, 30_000)
   setInterval(backupTick, 60_000).unref()
   // D38: captured changes go to the journal files (and off-site) every 10 s

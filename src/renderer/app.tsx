@@ -3,6 +3,7 @@ import { createHashRouter, Navigate, RouterProvider } from 'react-router-dom'
 import { AppShell } from './components/app-shell'
 import { ROUTES, type NavLeaf } from './components/nav'
 import { ToastProvider } from './components/ui'
+import { ConfirmProvider } from './components/confirm'
 import { t } from './i18n'
 import { SessionProvider, useSession } from './lib/session'
 import { ChangePasswordPage } from './pages/change-password'
@@ -25,7 +26,8 @@ import { CouponsPage, PromoPage } from './pages/promo'
 import { ReceivingPage } from './pages/receiving'
 import { DeliveryCommissionPage, ReportsPage, ZReportPage } from './pages/reports'
 import { WastePage } from './pages/waste'
-import { ForbiddenPage, PlaceholderPage, SystemPage } from './pages/simple'
+import { ForbiddenPage, PlaceholderPage } from './pages/simple'
+import { AboutPage, ManualPage } from './pages/system'
 import { UsersPage } from './pages/users'
 import { AuditPage } from './pages/audit'
 import { BackupPage } from './pages/backup'
@@ -55,7 +57,8 @@ const PAGES: Record<string, () => ReactNode> = {
   '/roles': () => <RolesPage />,
   '/audit': () => <AuditPage />,
   '/backup': () => <BackupPage />,
-  '/system': () => <SystemPage />,
+  '/system': () => <AboutPage />,
+  '/manual': () => <ManualPage />,
 }
 
 function Guarded({ route }: { route: NavLeaf }) {
@@ -113,7 +116,9 @@ export function App() {
   return (
     <SessionProvider>
       <ToastProvider>
-        <Gate />
+        <ConfirmProvider>
+          <Gate />
+        </ConfirmProvider>
       </ToastProvider>
     </SessionProvider>
   )

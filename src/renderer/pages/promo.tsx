@@ -5,6 +5,7 @@ import type { CategoryDto } from '@shared/api-sales'
 import { discountFor, type PromoRules, type PromoType } from '@shared/promotions'
 import { MoneyInput, Segmented } from '@renderer/components/modal'
 import { Card, Chip, DangerButton, Field, GradientButton, inputClass, OutlineButton, PageHeader, Pagination, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { formatDateTimeShort, money } from '@renderer/lib/format'
@@ -73,6 +74,7 @@ export function PromoPage() {
 function PromotionsTab() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const [promos, setPromos] = useState<PromotionDto[]>([])
   const [cats, setCats] = useState<CategoryDto[]>([])
   const [draft, setDraft] = useState<PromoDraft | null>(null)
@@ -113,7 +115,7 @@ function PromotionsTab() {
   }
 
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('promo.delete', { id: draft.id })
       setDraft(null)
@@ -268,6 +270,7 @@ function PromotionsTab() {
 function MembersTab() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const [q, setQ] = useState({ search: '', tierId: '', page: 1 })
   const [list, setList] = useState<{ items: MemberDto[]; total: number }>({ items: [], total: 0 })
   const [tiers, setTiers] = useState<TierDto[]>([])
@@ -306,7 +309,7 @@ function MembersTab() {
   }
 
   async function erase() {
-    if (!sel || !window.confirm(pr.eraseConfirm)) return
+    if (!sel || !(await confirm({ kind: 'danger', title: t.confirmDialog.eraseTitle, message: pr.eraseConfirm, confirmLabel: t.confirmDialog.erase }))) return
     try {
       await call('members.erase', { id: sel.id, reason: 'ลูกค้าขอลบข้อมูล (PDPA)' })
       setSel(null)

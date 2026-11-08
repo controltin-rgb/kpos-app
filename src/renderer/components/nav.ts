@@ -88,7 +88,16 @@ export const NAV: NavItem[] = [
   { key: 'audit', label: n.audit, icon: 'shield', tone: 'pink', path: '/audit', permission: 'audit:view', phase: 4 },
   { key: 'backup', label: n.backup, icon: 'cloud', tone: 'green', path: '/backup', permission: 'backup:view', phase: 4 },
   { key: 'settings', label: n.settings, icon: 'gear', tone: 'teal', path: '/settings', permission: 'settings:view', phase: 4 },
-  { key: 'system', label: n.system, icon: 'info', tone: 'amber', path: '/system', permission: null, phase: 1 },
+  {
+    key: 'system',
+    label: n.system,
+    icon: 'info',
+    tone: 'amber',
+    children: [
+      { path: '/system', label: n.about, permission: null, phase: 1, breadcrumb: `${n.system} / ${n.about}` },
+      { path: '/manual', label: n.manual, permission: 'manual:view', phase: 1, breadcrumb: `${n.system} / ${n.manual}` },
+    ],
+  },
 ]
 
 /** All leaf routes with their metadata. */

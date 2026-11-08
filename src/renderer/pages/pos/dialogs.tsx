@@ -1,5 +1,5 @@
 import QRCode from 'qrcode'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SaleResult } from '@shared/api-sales'
 import { MoneyInput, Modal, Segmented } from '@renderer/components/modal'
 import { GradientButton, inputClass, OutlineButton, useToast } from '@renderer/components/ui'
@@ -55,6 +55,7 @@ export function CashDialog({ total, busy, onPay, onClose }: { total: number; bus
 export function PromptPayDialog({ total, payload, busy, onConfirm, onClose }: { total: number; payload: string; busy: boolean; onConfirm: (reference: string) => void; onClose: () => void }) {
   const [img, setImg] = useState<string | null>(null)
   const [reference, setReference] = useState('')
+  const verify = useAutoVerify(total, busy, () => onConfirm(reference.trim() || AUTO_REFERENCE))
   useEffect(() => {
     let alive = true
     void QRCode.toDataURL(payload, { margin: 1, width: 240, errorCorrectionLevel: 'M' }).then((url) => alive && setImg(url))
@@ -68,6 +69,14 @@ export function PromptPayDialog({ total, payload, busy, onConfirm, onClose }: { 
         <div className="flex size-[248px] items-center justify-center rounded-[20px] border-2 border-border bg-white p-2">{img && <img src={img} alt="PromptPay QR" width={232} height={232} />}</div>
         <span className="text-[34px] font-bold text-accent-foreground">{money(total)}</span>
         <span className="rounded-full bg-warning px-4 py-2 text-sm font-semibold text-warning-foreground">{p.ppNote}</span>
+        {verify !== 'off' && (
+          <span
+            role="status"
+            className={`rounded-full px-4 py-2 text-sm font-semibold ${verify === 'paid' ? 'bg-success text-success-foreground' : verify === 'unavailable' ? 'bg-[#F3F0EC] text-muted-foreground' : 'bg-accent text-accent-foreground'}`}
+          >
+            {verify === 'paid' ? t.payVerify.paid : verify === 'unavailable' ? t.payVerify.unavailable : t.payVerify.waiting}
+          </span>
+        )}
       </div>
       <label className="flex flex-col gap-2 text-sm font-bold">
         {p.ppReference}
@@ -78,6 +87,54 @@ export function PromptPayDialog({ total, payload, busy, onConfirm, onClose }: { 
       </GradientButton>
     </Modal>
   )
+}
+
+/** reference stored on a bill confirmed by the automatic check (D41) */
+const AUTO_REFERENCE = 'AUTO-VERIFIED'
+const VERIFY_POLL_MS = 2_500
+
+/**
+ * D41: while the QR is shown, ask the main process every few seconds whether the money arrived
+ * (only when the shop turned the automatic check on). 'paid' confirms once; the manual button stays.
+ */
+function useAutoVerify(amountSatang: number, busy: boolean, onPaid: () => void): 'off' | 'waiting' | 'paid' | 'unavailable' {
+  const [state, setState] = useState<'off' | 'waiting' | 'paid' | 'unavailable'>('off')
+  const [since] = useState(() => Date.now())
+  const paidRef = useRef(onPaid)
+  useEffect(() => {
+    paidRef.current = onPaid
+  })
+  useEffect(() => {
+    if (busy) return
+    let alive = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const tick = async () => {
+      try {
+        const r = await call('pos.verifyPromptPay', { amountSatang, since })
+        if (!alive) return
+        if (r.status === 'paid') {
+          setState('paid')
+          paidRef.current()
+          return
+        }
+        if (r.status === 'unavailable') {
+          setState(r.message === 'manual' ? 'off' : 'unavailable')
+          return // nothing to wait for: manual confirm only
+        }
+        setState('waiting')
+      } catch {
+        if (alive) setState('unavailable')
+        return
+      }
+      timer = setTimeout(() => void tick(), VERIFY_POLL_MS)
+    }
+    void tick()
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+    }
+  }, [amountSatang, since, busy])
+  return state
 }
 
 /** Sale finished: bill number, change, stock warnings, print. */

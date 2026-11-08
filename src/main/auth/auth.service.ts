@@ -127,16 +127,23 @@ export class AuthService {
     this.audit.append({ action: 'auth.logout', userId: actor.userId, branchId: actor.branchId, entity: 'users', entityId: actor.userId })
   }
 
-  async changeOwnPassword(actor: Actor, currentPassword: string, newPassword: string): Promise<Actor> {
+  /** Re-checks the signed-in user's own password before a dangerous action (wrong = counted as a failed login). */
+  async verifyOwnPassword(actor: Actor, password: string): Promise<void> {
     const user = this.users.findById(actor.userId)
     if (!user?.auth_user_id) throw new AppError('NOT_FOUND')
     const ctx = await this.auth.$context
     const account = await ctx.internalAdapter.findCredentialAccount(user.auth_user_id)
-    const ok = !!account?.password && (await ctx.password.verify({ password: currentPassword, hash: account.password }))
+    const ok = !!account?.password && (await ctx.password.verify({ password, hash: account.password }))
     if (!ok) {
       this.recordFailure(user, 'password')
       throw new AppError('INVALID_CREDENTIALS')
     }
+  }
+
+  async changeOwnPassword(actor: Actor, currentPassword: string, newPassword: string): Promise<Actor> {
+    const user = this.users.findById(actor.userId)
+    if (!user?.auth_user_id) throw new AppError('NOT_FOUND')
+    await this.verifyOwnPassword(actor, currentPassword)
     await this.setPassword(user.auth_user_id, newPassword)
     const at = this.now()
     this.db.transaction(() => {

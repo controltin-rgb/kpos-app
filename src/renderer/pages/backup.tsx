@@ -8,6 +8,7 @@ import { formatDateTimeShort, formatTime, money } from '@renderer/lib/format'
 import { bangkokToday, panelClass } from '@renderer/lib/forms'
 import { useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
+import { CloudCard, ResetDatabaseCard } from './backup-cloud'
 
 const b = t.backup
 const DAY = 86_400_000
@@ -117,7 +118,7 @@ export function BackupPage() {
           circle={last && !last.ok ? '#FFE3E3' : '#DDF5E8'}
         />
         <StatCard label={b.cards.space} value={ov ? b.cards.spaceValue(ov.count, sizeLabel(ov.totalBytes)) : '—'} sub={ov ? b.cards.spaceSub(ov.keepDaily, ov.keepMonthly) : ''} circle="#EDE9FB" />
-        <StatCard label={b.cards.cloud} value={b.cards.cloudValue(ov?.outboxPending ?? 0)} sub={b.cards.cloudSub} circle="#E3EEFE" />
+        <StatCard label={b.cards.cloud} value={b.cards.cloudValue(!!ov?.cloudEnabled)} sub={b.cards.cloudSub(!!ov?.cloudLicensed)} circle="#E3EEFE" />
       </div>
 
       <Card className="flex flex-col gap-3 px-[22px]">
@@ -213,6 +214,11 @@ export function BackupPage() {
           <RestorePanel list={list} selected={selected} onSelect={setSelId} now={now} onChanged={() => void load()} />
         )}
       </div>
+
+      <div className="grid grid-cols-1 items-start gap-[18px] xl:grid-cols-2">
+        {ov && <CloudCard onChanged={() => void load()} />}
+        <ResetDatabaseCard />
+      </div>
     </>
   )
 }
@@ -299,7 +305,7 @@ function ScheduleCard({ ov, onSaved }: { ov: BackupOverviewDto; onSaved: (o: Bac
           <span className="text-[15px]">{b.destCloud}</span>
           <span className="text-xs text-[#7A8090]">{ov.cloudLicensed ? b.destCloudLicensed : b.destCloudDesc}</span>
         </div>
-        <Toggle checked={false} label={b.destCloud} disabled onChange={() => {}} />
+        <Toggle checked={ov.cloudLicensed && ov.cloudEnabled} label={b.destCloud} disabled onChange={() => {}} />
       </div>
       {!editable && <span className="text-xs text-muted-foreground">{b.noSettingsPermission}</span>}
     </Card>

@@ -106,8 +106,18 @@ describe('checkout → BOM stock deduction (§6.1, phase 2 criteria)', () => {
     expect(bill).toMatchObject({ orderType: 'delivery', channel: 'grab', extOrderId: 'GF-123', commissionBp: 3_000, commissionSatang: 1_350 })
   })
 
-  it('creates KDS tickets and advances them', async () => {
+  it('by default a paid bill is done at once: nothing waits on the bar screen (D40)', async () => {
     const { t, shop, sell } = await ready()
+    const { bill } = await sell([{ sizeId: shop.sizes.s22 }])
+    expect(await t.call(1, 'kds.tickets', { station: 'bar' })).toEqual([])
+    // still recorded, completed at payment time
+    const row = t.db.prepare('SELECT status, started_at, ready_at, completed_at, created_at FROM kds_tickets WHERE bill_id = ?').get(bill.id) as Record<string, unknown>
+    expect(row).toMatchObject({ status: 'completed', completed_at: row['created_at'], ready_at: row['created_at'], started_at: row['created_at'] })
+  })
+
+  it('creates KDS tickets and advances them (bar workflow switched on)', async () => {
+    const { t, shop, sell } = await ready()
+    await t.call(1, 'settings.update', { 'kds.complete_on_pay': false })
     const { bill } = await sell([{ sizeId: shop.sizes.s22, optionIds: [shop.normalSweet, shop.extraPearl] }])
     const [ticket] = await t.call(1, 'kds.tickets', { station: 'bar' })
     expect(ticket).toMatchObject({ billNo: bill.billNo, status: 'new' })

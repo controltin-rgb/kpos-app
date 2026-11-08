@@ -32,8 +32,12 @@ asarUnpack:
 # Never rebuild native modules: better-sqlite3's prebuilt N-API binaries work with Electron as they are,
 # and a rebuild would need Python + a C++ toolchain (node-gyp) on every build machine.
 npmRebuild: false
-# updates are installed over the old version by hand for now (D39) — no auto-update feed
-publish: null
+# auto-update (D42): a plain HTTPS folder the vendor uploads release/ files to (installer + latest*.yml).
+# The URL here is only a placeholder baked into app-update.yml; the app uses the shop's setting
+# "update.feed_url" (Settings → เครื่องและ License). Nothing is uploaded by electron-builder itself.
+publish:
+  provider: generic
+  url: https://updates.invalid/kposs
 
 win:
   target:
@@ -56,6 +60,9 @@ mac:
   target:
     - target: dmg
       arch: [x64, arm64]
+    # zip + latest-mac.yml let the app see a new version (installing it in place needs a signed app)
+    - target: zip
+      arch: [x64, arm64]
   category: public.app-category.business
   identity: null # unsigned until a signing certificate is configured (Gatekeeper: right-click → Open)
 
@@ -63,6 +70,10 @@ linux:
   target:
     - target: AppImage
       arch: [x64]
+    # plain archive: for machines without FUSE (AppImage needs it); also builds on Windows
+    - target: tar.gz
+      arch: [x64]
   category: Office
+  syncDesktopName: true
   maintainer: Korn
   synopsis: ระบบ POS สำหรับร้านเครื่องดื่ม/คาเฟ่

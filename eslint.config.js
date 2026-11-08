@@ -14,11 +14,11 @@ export default tseslint.config(
   },
   {
     // plain-JS build helpers run by Node / Electron directly (pnpm smoke, pnpm icon)
-    files: ['scripts/**/*.{mjs,cjs}'],
+    files: ['scripts/**/*.{mjs,cjs}', 'tests/**/*.cjs'],
     languageOptions: { globals: globals.node },
   },
   {
-    files: ['scripts/**/*.cjs'],
+    files: ['scripts/**/*.cjs', 'tests/**/*.cjs'],
     languageOptions: { sourceType: 'commonjs' },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },

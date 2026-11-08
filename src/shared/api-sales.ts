@@ -3,6 +3,7 @@ import type { Access, Endpoint } from './api'
 import { BILL_RESET_POLICIES, type BillResetPolicy } from './bill-number'
 import { type BillDiscountDto, discountInputs } from './api-promo'
 import { DENOMINATIONS_SATANG } from './cash'
+import { PAYMENT_PROVIDERS, PAYMENT_VERIFY_MODES, type PaymentProvider, type PaymentVerifyMode } from './payment-verify'
 
 /** Phase 2 IPC contract: catalog, inventory, POS, shifts, orders, KDS, settings. */
 
@@ -267,6 +268,14 @@ export interface SettingsDto {
   'tax.seller_tax_id': string
   'tax.seller_branch': string
   'tax.seller_address': string
+  'kds.complete_on_pay': boolean
+  'promptpay.verify_mode': PaymentVerifyMode
+  'promptpay.provider': PaymentProvider
+  'promptpay.merchant_id': string
+  'promptpay.provider_branch': string
+  'promptpay.provider_endpoint': string
+  'update.feed_url': string
+  'update.auto_check': boolean
   /** read-only info for the settings page */
   branchCode: string
   billNoExample: string
@@ -494,6 +503,14 @@ export const salesApi = {
         'tax.seller_tax_id': z.string().trim().max(20),
         'tax.seller_branch': z.string().trim().max(5),
         'tax.seller_address': z.string().trim().max(300),
+        'kds.complete_on_pay': z.boolean(),
+        'promptpay.verify_mode': z.enum(PAYMENT_VERIFY_MODES),
+        'promptpay.provider': z.enum(PAYMENT_PROVIDERS),
+        'promptpay.merchant_id': z.string().trim().max(80),
+        'promptpay.provider_branch': z.string().trim().max(80),
+        'promptpay.provider_endpoint': z.string().trim().max(300),
+        'update.feed_url': z.string().trim().max(300),
+        'update.auto_check': z.boolean(),
       })
       .partial(),
   ),

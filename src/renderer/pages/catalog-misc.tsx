@@ -3,6 +3,7 @@ import type { CategoryDto, IngredientDto, ModifierGroupDto } from '@shared/api-s
 import { uuidv7 } from '@shared/id'
 import { MoneyInput } from '@renderer/components/modal'
 import { Card, DangerButton, Field, GradientButton, OutlineButton, PageHeader, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { money, qty } from '@renderer/lib/format'
@@ -25,6 +26,7 @@ function toMilli(s: string): number | null {
 export function CategoriesPage() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const c = t.categories
   const [items, setItems] = useState<CategoryDto[]>([])
   const [draft, setDraft] = useState<{ id?: string; name: string; kdsStation: string; sortOrder: string } | null>(null)
@@ -51,7 +53,7 @@ export function CategoriesPage() {
     }
   }
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('catalog.deleteCategory', { id: draft.id })
       toast(t.crud.deleted)
@@ -157,6 +159,7 @@ const toGroupDraft = (g: ModifierGroupDto): GroupDraft => ({
 export function ModifiersPage() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const m = t.modifiers
   const [groups, setGroups] = useState<ModifierGroupDto[]>([])
   const [ingredients, setIngredients] = useState<IngredientDto[]>([])
@@ -204,7 +207,7 @@ export function ModifiersPage() {
     }
   }
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('catalog.deleteGroup', { id: draft.id })
       toast(t.crud.deleted)

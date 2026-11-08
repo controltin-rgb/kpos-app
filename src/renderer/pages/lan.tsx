@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { LanPingDto, LanStatusDto } from '@shared/api-lan'
 import { Segmented } from '@renderer/components/modal'
 import { Chip, GradientButton, OutlineButton, TextInput, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useAppEvent, useNow } from '@renderer/lib/events'
@@ -130,6 +131,7 @@ export function LanSection() {
 }
 
 function HostPanel({ s, busy, editable, pairingLeft, act }: { s: LanStatusDto; busy: boolean; editable: boolean; pairingLeft: number | null; act: <T>(fn: () => Promise<T>, ok?: string) => Promise<void> }) {
+  const confirm = useConfirm()
   const activeClients = s.clients.filter((c) => !c.revoked).length
   return (
     <>
@@ -179,7 +181,7 @@ function HostPanel({ s, busy, editable, pairingLeft, act }: { s: LanStatusDto; b
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => window.confirm(l.confirmRevoke(c.name)) && void act(() => call('lan.revokeDevice', { id: c.id }))}
+                onClick={async () => (await confirm({ kind: 'danger', icon: 'monitor', title: t.confirmDialog.revokeTitle, message: l.confirmRevoke(c.name), confirmLabel: l.revoke })) && void act(() => call('lan.revokeDevice', { id: c.id }))}
                 className="min-h-11 cursor-pointer rounded-full border-0 bg-white px-3.5 text-[13px] font-semibold text-danger-foreground"
               >
                 {l.revoke}
@@ -214,7 +216,7 @@ function HostPanel({ s, busy, editable, pairingLeft, act }: { s: LanStatusDto; b
         <OutlineButton
           className="self-start"
           disabled={busy}
-          onClick={() => window.confirm(l.confirmStandalone) && void act(() => call('lan.setMode', { mode: 'standalone' }), l.switchedStandalone)}
+          onClick={async () => (await confirm({ kind: 'warning', icon: 'monitor', title: l.switchToStandalone, message: l.confirmStandalone, confirmLabel: l.switchToStandalone })) && void act(() => call('lan.setMode', { mode: 'standalone' }), l.switchedStandalone)}
         >
           {l.switchToStandalone}
         </OutlineButton>

@@ -4,6 +4,7 @@ import { requirementPerUnit } from '@shared/bom'
 import { uuidv7 } from '@shared/id'
 import { MoneyInput, Segmented } from '@renderer/components/modal'
 import { Card, Chip, DangerButton, Field, GradientButton, OutlineButton, PageHeader, Pagination, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage, fieldErrors } from '@renderer/lib/api'
 import { money, qty } from '@renderer/lib/format'
@@ -88,6 +89,7 @@ function toDraft(p: ProductDto): Draft {
 export function ProductsPage() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const [products, setProducts] = useState<ProductDto[]>([])
   const [categories, setCategories] = useState<CategoryDto[]>([])
   const [groups, setGroups] = useState<ModifierGroupDto[]>([])
@@ -188,7 +190,7 @@ export function ProductsPage() {
   }
 
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('catalog.deleteProduct', { id: draft.id })
       toast(t.crud.deleted)

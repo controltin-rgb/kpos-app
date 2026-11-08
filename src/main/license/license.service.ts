@@ -90,7 +90,11 @@ export class LicenseService {
 
   private compute(): LicenseStatusDto {
     const { at, rollback } = this.effectiveNow()
-    const setupAt = this.db.prepare('SELECT min(created_at) FROM companies').pluck().get() as number | null
+    const companiesAt = this.db.prepare('SELECT min(created_at) FROM companies').pluck().get() as number | null
+    // a database reset carries the original trial start over, so it never grants a new trial
+    const carried = this.db.prepare(`SELECT value_json FROM settings WHERE key = 'license.trial_started_at' AND branch_id IS NULL`).pluck().get() as string | undefined
+    const trialAt = carried ? (JSON.parse(carried) as number) : null
+    const setupAt = companiesAt === null ? trialAt : trialAt === null ? companiesAt : Math.min(companiesAt, trialAt)
     const row = this.currentRow()
     const parsed = row ? this.verify(row.raw) : null
     const license = parsed?.ok ? parsed.payload : null

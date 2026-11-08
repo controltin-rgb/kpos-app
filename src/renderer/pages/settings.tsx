@@ -3,9 +3,10 @@ import { useSearchParams } from 'react-router-dom'
 import type { SettingsDto } from '@shared/api-sales'
 import { BILL_RESET_POLICIES, formatBillNo, periodKey, type BillResetPolicy } from '@shared/bill-number'
 import { isValidPromptPayId } from '@shared/promptpay'
+import { PAYMENT_PROVIDERS, PAYMENT_VERIFY_MODES, PROVIDER_DEFS, type PaymentProvider, type PaymentVerifyMode } from '@shared/payment-verify'
 import { isValidBranchNo, isValidThaiTaxId } from '@shared/tax-id'
 import { Segmented } from '@renderer/components/modal'
-import { Card, Chip, Field, GradientButton, PageHeader, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { Card, Chip, Field, GradientButton, OutlineButton, PageHeader, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useNow } from '@renderer/lib/events'
@@ -28,8 +29,36 @@ type Draft = Pick<
   | 'tax.seller_tax_id'
   | 'tax.seller_branch'
   | 'tax.seller_address'
+  | 'kds.complete_on_pay'
+  | 'promptpay.verify_mode'
+  | 'promptpay.provider'
+  | 'promptpay.merchant_id'
+  | 'promptpay.provider_branch'
+  | 'promptpay.provider_endpoint'
+  | 'update.feed_url'
+  | 'update.auto_check'
 >
-const DRAFT_KEYS: (keyof Draft)[] = ['vat.rate_bp', 'bill.reset_policy', 'promptpay.id', 'receipt.header', 'receipt.footer', 'receipt.paper_mm', 'stock.count_separate_approver', 'tax.seller_name', 'tax.seller_tax_id', 'tax.seller_branch', 'tax.seller_address']
+const DRAFT_KEYS: (keyof Draft)[] = [
+  'vat.rate_bp',
+  'bill.reset_policy',
+  'promptpay.id',
+  'receipt.header',
+  'receipt.footer',
+  'receipt.paper_mm',
+  'stock.count_separate_approver',
+  'tax.seller_name',
+  'tax.seller_tax_id',
+  'tax.seller_branch',
+  'tax.seller_address',
+  'kds.complete_on_pay',
+  'promptpay.verify_mode',
+  'promptpay.provider',
+  'promptpay.merchant_id',
+  'promptpay.provider_branch',
+  'promptpay.provider_endpoint',
+  'update.feed_url',
+  'update.auto_check',
+]
 
 /** docs/design/Settings.dc.html (draft) — sections available in phase 2. */
 export function SettingsPage() {
@@ -87,6 +116,8 @@ export function SettingsPage() {
   const dirty = Object.keys(patch).length > 0
   const taxIdOk = draft['tax.seller_tax_id'] === '' || isValidThaiTaxId(draft['tax.seller_tax_id'])
   const branchOk = isValidBranchNo(draft['tax.seller_branch'])
+  const feedOk = draft['update.feed_url'] === '' || /^https?:\/\//.test(draft['update.feed_url'])
+  const endpointOk = draft['promptpay.provider_endpoint'] === '' || /^https:\/\//.test(draft['promptpay.provider_endpoint'])
 
   async function save() {
     setBusy(true)
@@ -114,7 +145,7 @@ export function SettingsPage() {
         subtitle={st.subtitle}
         actions={
           editable && (
-            <GradientButton disabled={!dirty || busy || vatBp === null || !ppValid || !taxIdOk || !branchOk} onClick={() => void save()}>
+            <GradientButton disabled={!dirty || busy || vatBp === null || !ppValid || !taxIdOk || !branchOk || !feedOk || !endpointOk} onClick={() => void save()}>
               {busy ? t.common.saving : st.save}
             </GradientButton>
           )
@@ -186,6 +217,7 @@ export function SettingsPage() {
           <span className="rounded-xl bg-accent px-3 py-2 text-[13px] text-accent-foreground">{st.ppManual}</span>
         </Card>
       )}
+      {tab === 'payment' && <PayVerifyCard draft={draft} set={set} editable={editable} endpointOk={endpointOk} />}
 
       {tab === 'printer' && (
         <Card className="flex max-w-3xl flex-col gap-3">
@@ -210,6 +242,18 @@ export function SettingsPage() {
           <span className="text-xs text-muted-foreground">{st.printerNote}</span>
         </Card>
       )}
+      {tab === 'printer' && (
+        <Card className="flex max-w-3xl flex-col gap-3">
+          <h2 className="m-0 text-lg font-bold">{t.kdsSetting.title}</h2>
+          <div className="flex min-h-12 items-center justify-between gap-3">
+            <span className="flex flex-col text-[15px]">
+              {t.kdsSetting.completeOnPay}
+              <span className="text-xs text-muted-foreground">{t.kdsSetting.completeOnPayHint}</span>
+            </span>
+            <Toggle checked={draft['kds.complete_on_pay']} label={t.kdsSetting.completeOnPay} disabled={!editable} onChange={(v) => set('kds.complete_on_pay', v)} />
+          </div>
+        </Card>
+      )}
 
       {tab === 'stock' && (
         <Card className="flex max-w-3xl flex-col gap-3">
@@ -231,6 +275,106 @@ export function SettingsPage() {
           <LicenseSection />
         </Card>
       )}
+      {tab === 'device' && system?.deviceRole !== 'client' && (
+        <Card className="flex max-w-3xl flex-col gap-3">
+          <h2 className="m-0 text-lg font-bold">{t.update.feedTitle}</h2>
+          <Field label={t.update.feedUrl} hint={t.update.feedHint} error={feedOk ? undefined : t.update.feedInvalid}>
+            <TextInput value={draft['update.feed_url']} invalid={!feedOk} maxLength={300} disabled={!editable} placeholder="https://" onChange={(e) => set('update.feed_url', e.target.value.trim())} />
+          </Field>
+          <div className="flex min-h-12 items-center justify-between gap-3">
+            <span className="flex flex-col text-[15px]">
+              {t.update.autoCheck}
+              <span className="text-xs text-muted-foreground">{t.update.autoCheckHint}</span>
+            </span>
+            <Toggle checked={draft['update.auto_check']} label={t.update.autoCheck} disabled={!editable} onChange={(v) => set('update.auto_check', v)} />
+          </div>
+        </Card>
+      )}
     </>
+  )
+}
+
+function PayVerifyCard({ draft, set, editable, endpointOk }: { draft: Draft; set: <K extends keyof Draft>(k: K, v: Draft[K]) => void; editable: boolean; endpointOk: boolean }) {
+  const toast = useToast()
+  const p = t.payVerify
+  const [hasKey, setHasKey] = useState<boolean | null>(null)
+  const [key, setKey] = useState('')
+  useEffect(() => {
+    call('payments.verifyInfo').then((r) => setHasKey(r.hasApiKey), () => setHasKey(null))
+  }, [])
+  const def = PROVIDER_DEFS[draft['promptpay.provider']]
+  const auto = draft['promptpay.verify_mode'] === 'auto'
+  async function saveKey(apiKey: string | null) {
+    try {
+      const r = await call('payments.saveApiKey', { apiKey })
+      setHasKey(r.hasApiKey)
+      setKey('')
+      toast(p.keySaved)
+    } catch (err) {
+      toast(errorMessage(err), 'error')
+    }
+  }
+  return (
+    <Card className="flex max-w-3xl flex-col gap-3">
+      <h2 className="m-0 text-lg font-bold">{p.title}</h2>
+      <span className="text-sm text-muted-foreground">{p.desc}</span>
+      <div className="max-w-md">
+        <Segmented
+          label={p.mode}
+          value={draft['promptpay.verify_mode']}
+          onChange={(v) => editable && set('promptpay.verify_mode', v as PaymentVerifyMode)}
+          options={PAYMENT_VERIFY_MODES.map((m) => ({ value: m, label: p.modes[m] }))}
+        />
+      </div>
+      {auto && (
+        <>
+          <div className="max-w-md">
+            <Field label={p.provider}>
+              <SelectInput value={draft['promptpay.provider']} disabled={!editable} onChange={(e) => set('promptpay.provider', e.target.value as PaymentProvider)}>
+                {PAYMENT_PROVIDERS.map((x) => (
+                  <option key={x} value={x}>
+                    {p.providers[x]}
+                  </option>
+                ))}
+              </SelectInput>
+            </Field>
+          </div>
+          {draft['promptpay.provider'] === 'mock' && <span className="rounded-xl bg-danger px-3 py-2 text-[13px] text-danger-foreground">{p.mockWarn}</span>}
+          {!def.connected && <span className="rounded-xl bg-warning px-3 py-2 text-[13px] text-warning-foreground">{p.notConnected}</span>}
+          <div className="grid grid-cols-2 gap-3">
+            {def.fields.includes('merchantId') && (
+              <Field label={p.merchantId}>
+                <TextInput value={draft['promptpay.merchant_id']} maxLength={80} disabled={!editable} onChange={(e) => set('promptpay.merchant_id', e.target.value)} />
+              </Field>
+            )}
+            {def.fields.includes('branchId') && (
+              <Field label={p.branchId}>
+                <TextInput value={draft['promptpay.provider_branch']} maxLength={80} disabled={!editable} onChange={(e) => set('promptpay.provider_branch', e.target.value)} />
+              </Field>
+            )}
+            {def.fields.includes('endpoint') && (
+              <div className="col-span-2">
+                <Field label={p.endpoint} error={endpointOk ? undefined : t.update.feedInvalid}>
+                  <TextInput value={draft['promptpay.provider_endpoint']} maxLength={300} disabled={!editable} onChange={(e) => set('promptpay.provider_endpoint', e.target.value.trim())} />
+                </Field>
+              </div>
+            )}
+          </div>
+          {def.needsSecret && editable && (
+            <div className="flex flex-wrap items-end gap-2.5">
+              <div className="min-w-[260px] flex-1">
+                <Field label={p.apiKey} hint={hasKey ? p.apiKeySet : undefined}>
+                  <TextInput type="password" autoComplete="off" value={key} maxLength={256} onChange={(e) => setKey(e.target.value)} />
+                </Field>
+              </div>
+              <OutlineButton disabled={!key} onClick={() => void saveKey(key)}>
+                {p.saveKey}
+              </OutlineButton>
+              {hasKey && <OutlineButton onClick={() => void saveKey(null)}>{p.removeKey}</OutlineButton>}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   )
 }

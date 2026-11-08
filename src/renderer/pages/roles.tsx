@@ -3,6 +3,7 @@ import type { RoleSummary } from '@shared/api'
 import { CRUD, normalizePermissions, RESOURCES, SPECIAL_PERMISSIONS, WILDCARD, type CrudAction, type Permission, type Resource } from '@shared/permissions'
 import { countActions, RESOURCE_KEYS, visibleResources } from '@renderer/components/role-style'
 import { Card, Chip, DangerButton, Field, GradientButton, OutlineButton, PageHeader, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useSession } from '@renderer/lib/session'
@@ -23,6 +24,7 @@ const sameDraft = (a: Draft, b: Draft) => a.name === b.name && a.description ===
 export function RolesPage() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const [roles, setRoles] = useState<RoleSummary[]>([])
   const [selId, setSelId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -66,8 +68,8 @@ export function RolesPage() {
   const isAll = !!draft?.perms.includes(WILDCARD)
   const stats = useMemo(() => countActions(draft?.perms ?? []), [draft])
 
-  function select(role: RoleSummary) {
-    if (dirty && !window.confirm(r.dirty)) return
+  async function select(role: RoleSummary) {
+    if (dirty && !(await confirm({ kind: 'warning', title: r.dirty, message: t.confirmDialog.discardBody, confirmLabel: t.confirmDialog.discard }))) return
     setSelId(role.id)
     setDraft(toDraft(role))
     setJustSaved(false)
@@ -134,7 +136,7 @@ export function RolesPage() {
   }
 
   async function remove() {
-    if (!cur || !window.confirm(r.deleteConfirm(cur.name))) return
+    if (!cur || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: r.deleteConfirm(cur.name), confirmLabel: t.confirmDialog.delete }))) return
     setBusy(true)
     try {
       await call('roles.delete', { id: cur.id })
@@ -167,7 +169,7 @@ export function RolesPage() {
                 key={role.id}
                 type="button"
                 aria-pressed={sel}
-                onClick={() => select(role)}
+                onClick={() => void select(role)}
                 className={cn(
                   'box-border flex min-h-[60px] w-full cursor-pointer items-center gap-3 rounded-2xl border-2 px-3 py-2 text-foreground',
                   sel ? 'border-[#9776F6] bg-[#F5F2FE]' : 'border-transparent bg-[#F7F5F2]',

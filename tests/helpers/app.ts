@@ -29,6 +29,8 @@ export interface TestAppOptions {
   journal?: boolean | { restored: boolean }
   /** this machine's identity (default: POS-01, standalone) */
   device?: AppContextOptions['device']
+  /** fake S3 for the cloud backup */
+  cloudFetch?: AppContextOptions['cloudFetch']
 }
 
 /** In-memory app (real migrations, real BetterAuth, real router) with a controllable clock. */
@@ -52,6 +54,7 @@ export function createTestApp(opts: TestAppOptions = {}) {
     ...(opts.printHtml ? { printHtml: opts.printHtml } : {}),
     ...(opts.saveFile ? { saveFile: opts.saveFile } : {}),
     ...(opts.device ? { device: opts.device } : {}),
+    ...(opts.cloudFetch ? { cloudFetch: opts.cloudFetch } : {}),
     log: process.env['KPOSS_TEST_LOG'] ? (m, e) => console.error(m, e) : () => {},
   })
 

@@ -212,6 +212,7 @@ export class SaleService {
     eventData?: Record<string, unknown>
   }): ShortageNoticeDto[] {
     const shortages: ShortageNoticeDto[] = []
+    const kdsDoneOnPay = a.kds && this.settings.get('kds.complete_on_pay')
     const shift = a.shift
     const deviceId = shift.device_id
     const commissionSatang = a.order.commissionBp !== null ? percentOfSatang(a.totals.total, a.order.commissionBp) : null
@@ -289,12 +290,15 @@ export class SaleService {
         shortages.push({ ingredientName: n.ingredientName, baseUnit: n.baseUnit, qtyMilli: n.qtyMilli })
       }
       if (a.kds && l.kdsStation) {
+        // 'kds.complete_on_pay': the drink is handed over at payment, so the ticket is done at once and
+        // never waits on the bar screen (still recorded, e.g. for prep-time reports)
+        const done = kdsDoneOnPay ? a.at : null
         this.db
           .prepare(
-            `INSERT INTO kds_tickets (id, branch_id, bill_id, bill_item_id, station, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'new', ?, ?)`,
+            `INSERT INTO kds_tickets (id, branch_id, bill_id, bill_item_id, station, status, created_at, started_at, ready_at, completed_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(uuidv7(a.at), a.branchId, a.billId, itemId, l.kdsStation, a.at, a.at)
+          .run(uuidv7(a.at), a.branchId, a.billId, itemId, l.kdsStation, kdsDoneOnPay ? 'completed' : 'new', a.at, done, done, done, a.at)
       }
     })
 

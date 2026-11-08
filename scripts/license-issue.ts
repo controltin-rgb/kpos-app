@@ -1,19 +1,18 @@
 /**
- * Issues a signed .LIC file for one machine (D29, D31).
+ * Issues a signed .LIC file for one machine (D29, D31). Vendor machine only.
+ * For a point-and-click version with the register of issued licenses: pnpm license:tool
  *
  *   pnpm license:issue -- --hw HW-1A2B-3C4D-5E6F-7A8B --licensee "ร้านกาแฟตัวอย่าง" --plan "Standard" \
- *        --days 365 --employees 15 --clients 2 [--cloud] [--key <private.pem>] [--out <file.LIC>]
+ *        --days 365 --employees 15 --clients 2 [--cloud] [--key <private.pem>] [--out <file.LIC>] [--note "…"]
  *   --expires 2027-12-31   instead of --days (end of that day, Asia/Bangkok)
  *   --perpetual            no expiry
  *
- * The private key defaults to ~/.kposs/license-signing-key.pem (or env KPOSS_LICENSE_KEY).
+ * The private key defaults to ~/.kposs/license-signing-key.pem (or env KPOSS_LICENSE_KEY); every
+ * issued license is appended to ~/.kposs/issued-licenses.jsonl (or env KPOSS_LICENSE_REGISTER).
  */
-import { readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { signLicense } from '../src/main/license/license-file'
-import { uuidv7 } from '../src/shared/id'
-import { DAY_MS, HARDWARE_ID_RE, type LicensePayload } from '../src/shared/license'
+import { writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { defaultKeyPath, issue, IssueError, type IssueInput } from './license-lib'
 
 const argv = process.argv.slice(2).filter((a) => a !== '--')
 const opt = (name: string) => {
@@ -26,43 +25,26 @@ const fail = (msg: string): never => {
   process.exit(1)
 }
 
-const hardwareId = (opt('hw') ?? fail('--hw is required (the Hardware ID shown in Settings → License)')).toUpperCase()
-if (!HARDWARE_ID_RE.test(hardwareId)) fail(`invalid --hw ${hardwareId} (expected HW-XXXX-XXXX-XXXX-XXXX)`)
-const licensee = opt('licensee') ?? fail('--licensee is required')
-const plan = opt('plan') ?? 'Standard'
-const now = Date.now()
+const term: IssueInput['term'] = flag('perpetual') ? { kind: 'perpetual' } : opt('expires') ? { kind: 'until', date: opt('expires')! } : { kind: 'days', days: Number(opt('days') ?? 365) }
 
-let expiresAt: number | null
-if (flag('perpetual')) expiresAt = null
-else if (opt('expires')) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(opt('expires')!) ?? fail('--expires must be YYYY-MM-DD')
-  // end of that day in Asia/Bangkok (UTC+7)
-  expiresAt = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1) - 7 * 3_600_000
-} else expiresAt = now + Number(opt('days') ?? 365) * DAY_MS
-
-const num = (name: string, def: number) => {
-  const v = Number(opt(name) ?? def)
-  return Number.isInteger(v) && v >= 0 ? v : fail(`--${name} must be a whole number`)
-}
-
-const payload: LicensePayload = {
-  licenseId: uuidv7(now),
-  licensee,
-  plan,
-  hardwareId,
-  issuedAt: now,
-  expiresAt,
-  features: { maxEmployees: num('employees', 10), maxClients: num('clients', 0), cloudBackup: flag('cloud') },
-}
-
-const keyPath = resolve(opt('key') ?? process.env['KPOSS_LICENSE_KEY'] ?? join(homedir(), '.kposs', 'license-signing-key.pem'))
-let pem: string
 try {
-  pem = readFileSync(keyPath, 'utf8')
-} catch {
-  fail(`cannot read private key ${keyPath} — run pnpm license:keygen first`)
+  const { content, payload, fileName } = issue(
+    {
+      hardwareId: opt('hw') ?? fail('--hw is required (the Hardware ID shown in Settings → License)'),
+      licensee: opt('licensee') ?? fail('--licensee is required'),
+      plan: opt('plan') ?? 'Standard',
+      term,
+      maxEmployees: Number(opt('employees') ?? 10),
+      maxClients: Number(opt('clients') ?? 0),
+      cloudBackup: flag('cloud'),
+      note: opt('note') ?? '',
+    },
+    { keyPath: opt('key') ? resolve(opt('key')!) : defaultKeyPath() },
+  )
+  const out = resolve(opt('out') ?? fileName)
+  writeFileSync(out, content)
+  console.log(`issued ${payload.licenseId} → ${out}`)
+  console.log(JSON.stringify({ ...payload, expiresAt: payload.expiresAt ? new Date(payload.expiresAt).toISOString() : 'perpetual' }, null, 2))
+} catch (err) {
+  fail(err instanceof IssueError ? err.message : String(err))
 }
-const out = resolve(opt('out') ?? `${licensee.replace(/[^\p{L}\p{N}_-]+/gu, '_')}-${hardwareId}.LIC`)
-writeFileSync(out, signLicense(payload, pem!))
-console.log(`issued ${payload.licenseId} → ${out}`)
-console.log(JSON.stringify({ ...payload, expiresAt: expiresAt ? new Date(expiresAt).toISOString() : 'perpetual' }, null, 2))

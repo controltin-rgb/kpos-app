@@ -25,6 +25,14 @@ import { PromoService } from '@main/services/promo.service'
 import { ReportService } from '@main/services/report.service'
 import { DashboardService } from '@main/services/dashboard.service'
 import { UsersService } from '@main/services/users.service'
+import { SystemService } from '@main/services/system.service'
+import { PaymentVerifyService } from '@main/services/payment-verify.service'
+import { MemorySecretStore, type SecretStore } from '@main/secrets'
+import { noUpdater, type UpdaterPort } from '@main/updater'
+import { CloudBackup, type CloudConfig } from '@main/backup/cloud'
+import type { S3Fetch } from '@main/backup/s3'
+import { CLOUD_SYNC_INTERVAL_MIN, type CloudOverviewDto } from '@shared/api-system'
+import { hasPermission } from '@shared/permissions'
 import { formatBillNo, periodKey } from '@shared/bill-number'
 import { AppError } from '@shared/errors'
 import { buildPromptPayPayload } from '@shared/promptpay'
@@ -76,6 +84,12 @@ export interface AppContextOptions {
   licensePublicKeys?: readonly string[]
   /** native dialog to pick a .LIC; returns its text */
   pickLicenseFile?: () => Promise<string | null>
+  /** credentials typed in by the shop, kept outside the DB (default: memory, for tests) */
+  secrets?: SecretStore
+  /** auto-update (D42); default: never updates */
+  updater?: UpdaterPort
+  /** fetch used by the cloud client (tests inject a fake S3) */
+  cloudFetch?: S3Fetch
   /** Host/Client networking (D33); absent → this machine stays Standalone */
   lan?: Omit<LanManagerOptions, 'appVersion'>
 }
@@ -139,6 +153,42 @@ export function createAppContext(opts: AppContextOptions) {
   const dashboard = new DashboardService(db, reports, shifts, stock, now, () => license.status().daysLeft)
   const backup = new BackupService(db, audit, settings, { paths: opts.backupPaths ?? null, now, cloudLicensed: () => license.status().features.cloudBackup, journal, ...(opts.pickFolder ? { pickFolder: opts.pickFolder } : {}) })
   const auditQuery = new AuditQueryService(db, now)
+  const system = new SystemService(db, audit, authService, now)
+  const secrets = opts.secrets ?? new MemorySecretStore()
+  const updater = opts.updater ?? noUpdater(opts.versions?.app ?? '0.0.0')
+  const payVerify = new PaymentVerifyService(settings, secrets, now)
+  const cloudLicensed = () => license.status().features.cloudBackup
+  const cloudConfig = async (): Promise<CloudConfig | null> => {
+    const secretAccessKey = await secrets.get('cloud.secret_access_key')
+    const passphrase = await secrets.get('cloud.passphrase')
+    const c = { endpoint: settings.get('cloud.endpoint'), region: settings.get('cloud.region'), bucket: settings.get('cloud.bucket'), prefix: settings.get('cloud.prefix'), accessKeyId: settings.get('cloud.access_key_id') }
+    if (!c.endpoint || !c.bucket || !c.accessKeyId || !secretAccessKey || !passphrase) return null
+    return { ...c, secretAccessKey, passphrase }
+  }
+  const cloud = opts.backupPaths ? new CloudBackup(opts.backupPaths.backupDir, cloudConfig, { now, ...(opts.cloudFetch ? { fetch: opts.cloudFetch } : {}) }) : null
+  const cloudConfigured = () =>
+    !!(settings.get('cloud.endpoint') && settings.get('cloud.bucket') && settings.get('cloud.access_key_id') && secrets.has('cloud.secret_access_key') && secrets.has('cloud.passphrase'))
+  const cloudOverview = (): CloudOverviewDto => ({
+    ...(cloud?.status(cloudConfigured()) ?? { configured: false, lastSyncAt: null, lastError: null, lastErrorAt: null, uploadedFiles: 0, pendingFiles: 0, running: false }),
+    licensed: cloudLicensed(),
+    enabled: settings.get('cloud.enabled'),
+    endpoint: settings.get('cloud.endpoint'),
+    region: settings.get('cloud.region'),
+    bucket: settings.get('cloud.bucket'),
+    prefix: settings.get('cloud.prefix'),
+    accessKeyId: settings.get('cloud.access_key_id'),
+    hasSecretKey: secrets.has('cloud.secret_access_key'),
+    hasPassphrase: secrets.has('cloud.passphrase'),
+    intervalMin: CLOUD_SYNC_INTERVAL_MIN,
+  })
+  /** scheduler (force=false: only when switched on) and "sync now"; needs the license feature (D29) */
+  const cloudSync = async (force: boolean) => {
+    if (!cloud) throw new AppError('BACKUP_UNAVAILABLE')
+    if (!cloudLicensed()) throw new AppError('CLOUD_NOT_CONFIGURED', { reason: 'license' })
+    if (!force && !settings.get('cloud.enabled')) return cloudOverview()
+    await cloud.sync()
+    return cloudOverview()
+  }
   const syncHost = new SyncHostService(db, catalog, promo, settings, docs, sales, audit, now)
   const lan = new LanManager(
     {
@@ -299,6 +349,95 @@ export function createAppContext(opts: AppContextOptions) {
       await backup.pitrReplace(ctx.actor, input.at)
       if (opts.relaunch) setTimeout(opts.relaunch, 300)
       return { restarting: !!opts.relaunch }
+    },
+
+    // ---- System menu: about / manual / reset ------------------------------
+    'system.about': () => system.about(),
+    'system.saveAbout': (ctx, input) => system.saveAbout(ctx.actor, input.info),
+    'manual.list': (ctx, input) => system.manual(input.includeHidden && hasPermission(ctx.actor.grants, 'manual:update')),
+    'manual.save': (ctx, input) => system.saveManualPage(ctx.actor, input),
+    'manual.reset': (ctx, input) => (system.resetManualPage(ctx.actor, input.slug), null),
+    'system.resetDatabase': async (ctx, input) => {
+      if (remoteScope()) throw new AppError('LAN_NOT_AVAILABLE') // only on the machine that owns the database
+      await system.stageDatabaseReset(ctx.actor, input.password, opts.backupPaths?.dbPath ?? null)
+      if (opts.relaunch) setTimeout(opts.relaunch, 300)
+      return { restarting: !!opts.relaunch }
+    },
+
+    // ---- cloud backup (D43) ------------------------------------------------
+    'cloud.overview': () => cloudOverview(),
+    'cloud.save': async (ctx, input) => {
+      if (remoteScope()) throw new AppError('LAN_NOT_AVAILABLE') // the credentials stay on the Host
+      const before = cloudOverview()
+      settings.update(ctx.actor, {
+        'cloud.enabled': input.enabled,
+        'cloud.endpoint': input.endpoint,
+        'cloud.region': input.region || 'auto',
+        'cloud.bucket': input.bucket,
+        'cloud.prefix': input.prefix,
+        'cloud.access_key_id': input.accessKeyId,
+      })
+      if (input.secretAccessKey !== undefined) await secrets.set('cloud.secret_access_key', input.secretAccessKey)
+      if (input.passphrase !== undefined) await secrets.set('cloud.passphrase', input.passphrase)
+      if (input.secretAccessKey !== undefined || input.passphrase !== undefined)
+        audit.append({
+          action: 'backup.cloud_credentials',
+          permission: 'settings:update',
+          userId: ctx.actor.userId,
+          branchId: ctx.actor.branchId,
+          entity: 'settings',
+          entityId: 'cloud',
+          before: { hasSecretKey: before.hasSecretKey, hasPassphrase: before.hasPassphrase },
+          after: { hasSecretKey: secrets.has('cloud.secret_access_key'), hasPassphrase: secrets.has('cloud.passphrase') },
+          risk: 'high',
+        })
+      return cloudOverview()
+    },
+    'cloud.test': async () => {
+      if (!cloud) throw new AppError('BACKUP_UNAVAILABLE')
+      return { ok: true as const, objects: (await cloud.remote()).length }
+    },
+    'cloud.syncNow': async (ctx) => {
+      const r = await cloudSync(true)
+      audit.append({ action: 'backup.cloud_sync', permission: 'backup:create', userId: ctx.actor.userId, branchId: ctx.actor.branchId, entity: 'backup', after: { uploadedFiles: r.uploadedFiles }, risk: 'low' })
+      return r
+    },
+    'cloud.download': async (ctx) => {
+      if (!cloud) throw new AppError('BACKUP_UNAVAILABLE')
+      const files = await cloud.downloadAll()
+      const backups = backup.reconcile()
+      audit.append({ action: 'backup.cloud_download', permission: 'backup:restore', userId: ctx.actor.userId, branchId: ctx.actor.branchId, entity: 'backup', after: { files, backups }, risk: 'high' })
+      return { files, backups }
+    },
+
+    // ---- auto-update (D42) ------------------------------------------------
+    'update.status': () => updater.status(),
+    'update.check': () => updater.check(),
+    'update.install': (ctx) => {
+      audit.append({ action: 'system.update_install', permission: 'settings:update', userId: ctx.actor.userId, branchId: ctx.actor.branchId, entity: 'system', after: { version: updater.status().version }, risk: 'medium' })
+      setTimeout(() => updater.install(), 300)
+      return null
+    },
+
+    // ---- PromptPay automatic check (D41) -----------------------------------
+    'pos.verifyPromptPay': (_ctx, input) => payVerify.verify(input),
+    'payments.verifyInfo': () => ({ hasApiKey: secrets.has('promptpay.api_key') }),
+    'payments.saveApiKey': async (ctx, input) => {
+      if (remoteScope()) throw new AppError('LAN_NOT_AVAILABLE')
+      const before = secrets.has('promptpay.api_key')
+      if (input.apiKey !== undefined) await secrets.set('promptpay.api_key', input.apiKey)
+      audit.append({
+        action: 'settings.payment_api_key',
+        permission: 'settings:update',
+        userId: ctx.actor.userId,
+        branchId: ctx.actor.branchId,
+        entity: 'settings',
+        entityId: 'promptpay.api_key',
+        before: { hasApiKey: before },
+        after: { hasApiKey: secrets.has('promptpay.api_key') },
+        risk: 'high',
+      })
+      return { hasApiKey: secrets.has('promptpay.api_key') }
     },
 
     // ---- catalog ----------------------------------------------------------
@@ -502,7 +641,7 @@ export function createAppContext(opts: AppContextOptions) {
     ...(opts.log ? { log: opts.log } : {}),
   })
 
-  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard, backup, journal, license, lan, syncHost }
+  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard, backup, journal, license, lan, syncHost, system, cloud, cloudSync, updater, secrets }
 }
 
 export type AppContext = ReturnType<typeof createAppContext>

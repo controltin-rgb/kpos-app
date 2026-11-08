@@ -5,9 +5,10 @@ import { promoApi } from './api-promo'
 import { reportsApi } from './api-reports'
 import { dashboardApi } from './api-dashboard'
 import { stockApi } from './api-stock'
-import { licenseApi, systemApi } from './api-system'
+import { aboutApi, licenseApi, opsApi, systemApi } from './api-system'
 import { lanApi } from './api-lan'
 import type { Permission } from './permissions'
+import type { UpdateStatusDto } from './api-system'
 
 /**
  * IPC contract: every renderer → main call is listed here with
@@ -238,6 +239,8 @@ export const api = {
   ...stockApi,
   ...systemApi,
   ...licenseApi,
+  ...aboutApi,
+  ...opsApi,
   ...lanApi,
   ...expensesApi,
   ...promoApi,
@@ -267,6 +270,8 @@ export type AppEvent =
   | { type: 'lan.state'; connected: boolean; error: string | null }
   /** Client: offline bills waiting for / refused by the Host (D36) */
   | { type: 'sync.state'; pending: number; rejected: number }
+  /** auto-update progress (D42) */
+  | { type: 'update.state'; status: UpdateStatusDto }
 
 /** API surface exposed on window.kposs by the preload script. */
 export interface KpossBridge {

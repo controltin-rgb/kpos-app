@@ -280,6 +280,7 @@ export class BackupService {
       offsiteReachable: offsiteDir !== '' && isWritableDir(offsiteDir),
       canPickFolder: !!this.opts.pickFolder && !remoteScope(),
       cloudLicensed: this.opts.cloudLicensed?.() ?? false,
+      cloudEnabled: this.settings.get('cloud.enabled'),
       outboxPending: this.db.prepare('SELECT count(*) FROM sync_queue WHERE sent_at IS NULL').pluck().get() as number,
       pitr: this.pitrStatus(),
     }

@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import type { Access, Endpoint } from './api'
+import { aboutSchema, type AboutInfo } from './about'
 import type { LicenseEvaluation } from './license'
+import { MANUAL_SLUG_RE } from './manual'
 
 /** Phase 4a IPC contract — Backup / Restore (Implement.md §6.10, D25) and the Audit Log page. */
 
@@ -135,8 +137,10 @@ export interface BackupOverviewDto {
   offsiteReachable: boolean
   /** this build can open a native folder picker */
   canPickFolder: boolean
-  /** the license includes cloud backup (the uploader itself is not built yet) */
+  /** the license includes cloud backup (D29) */
   cloudLicensed: boolean
+  /** the cloud copy is switched on (D43) */
+  cloudEnabled: boolean
   /** Client → Host / cloud outbox rows not sent yet (sync_queue) */
   outboxPending: number
   /** null = the change journal is not running on this machine */
@@ -225,4 +229,139 @@ export const licenseApi = {
   'license.status': ep<LicenseStatusDto>()('authenticated', z.undefined()),
   /** content = the .LIC text; omitted → the main process opens a file dialog */
   'license.import': ep<LicenseStatusDto | null>()('license:manage', z.object({ content: z.string().max(16_000).optional() }).default({})),
+} as const
+
+// ---------------------------------------------------------------------------
+// System menu: About / user manual / database reset
+// ---------------------------------------------------------------------------
+
+export interface AboutDto {
+  info: AboutInfo
+  /** false = the shipped default text */
+  edited: boolean
+  updatedAt: number | null
+}
+
+export interface ManualPageDto {
+  slug: string
+  title: string
+  body: string
+  sort: number
+  /** shipped with the app (can be reset to the original text) */
+  builtin: boolean
+  /** the shop changed it (or added it) */
+  edited: boolean
+  hidden: boolean
+  updatedAt: number | null
+  updatedByName: string | null
+}
+
+export const aboutApi = {
+  'system.about': ep<AboutDto>()('authenticated', z.undefined()),
+  /** info null = back to the shipped text */
+  'system.saveAbout': ep<AboutDto>()('system:update', z.object({ info: aboutSchema.nullable() })),
+
+  /** includeHidden needs manual:update (checked in the handler) */
+  'manual.list': ep<ManualPageDto[]>()('manual:view', z.object({ includeHidden: z.boolean().default(false) }).default({ includeHidden: false })),
+  'manual.save': ep<ManualPageDto>()(
+    'manual:update',
+    z.object({
+      slug: z.string().regex(MANUAL_SLUG_RE).nullable(),
+      title: z.string().trim().min(1).max(120),
+      body: z.string().max(100_000),
+      sort: z.number().int().min(0).max(100_000).optional(),
+      hidden: z.boolean().optional(),
+    }),
+  ),
+  'manual.reset': ep<null>()('manual:update', z.object({ slug: z.string().regex(MANUAL_SLUG_RE) })),
+
+  /** Super Admin only (checked in the service, with the password): wipe everything, keep the license, restart into first-run setup. */
+  'system.resetDatabase': ep<{ restarting: boolean }>()('backup:restore', z.object({ confirm: z.literal('RESET'), password: z.string().min(1).max(128) })),
+} as const
+
+// ---------------------------------------------------------------------------
+// Cloud backup (D43), auto-update (D42), PromptPay automatic check (D41)
+// ---------------------------------------------------------------------------
+
+export interface CloudStatusDto {
+  configured: boolean
+  lastSyncAt: number | null
+  lastError: string | null
+  lastErrorAt: number | null
+  uploadedFiles: number
+  /** local files new or changed since the last upload */
+  pendingFiles: number
+  running: boolean
+}
+
+export interface CloudOverviewDto extends CloudStatusDto {
+  /** the license includes cloud backup (D29) */
+  licensed: boolean
+  enabled: boolean
+  endpoint: string
+  region: string
+  bucket: string
+  prefix: string
+  accessKeyId: string
+  /** secrets are never sent back to the screen — only whether they are set */
+  hasSecretKey: boolean
+  hasPassphrase: boolean
+  intervalMin: number
+}
+
+/** how often the cloud mirror runs (plus right after every snapshot) */
+export const CLOUD_SYNC_INTERVAL_MIN = 5
+
+const secretInput = z.string().max(256).nullable().optional() // undefined = keep, null/'' = remove
+
+export type UpdateState = 'unsupported' | 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error'
+
+export interface UpdateStatusDto {
+  state: UpdateState
+  configured: boolean
+  feedUrl: string
+  autoCheck: boolean
+  currentVersion: string
+  /** the newer version found */
+  version: string | null
+  releaseNotes: string | null
+  /** 0–100 while downloading */
+  percent: number | null
+  checkedAt: number | null
+  error: string | null
+}
+
+export const opsApi = {
+  'cloud.overview': ep<CloudOverviewDto>()('backup:view', z.undefined()),
+  'cloud.save': ep<CloudOverviewDto>()(
+    'settings:update',
+    z.object({
+      enabled: z.boolean(),
+      endpoint: z.string().trim().max(300),
+      region: z.string().trim().max(40),
+      bucket: z.string().trim().max(63),
+      prefix: z.string().trim().max(120),
+      accessKeyId: z.string().trim().max(128),
+      secretAccessKey: secretInput,
+      passphrase: z.string().min(8).max(256).nullable().optional(),
+    }),
+  ),
+  /** checks the credentials by listing the bucket prefix */
+  'cloud.test': ep<{ ok: true; objects: number }>()('settings:update', z.undefined()),
+  'cloud.syncNow': ep<CloudOverviewDto>()('backup:create', z.undefined()),
+  /** new machine: download + decrypt the cloud copy into the backup folder, then list it on the Backup page */
+  'cloud.download': ep<{ files: number; backups: number }>()('backup:restore', z.object({ confirm: z.literal('DOWNLOAD') })),
+
+  'update.status': ep<UpdateStatusDto>()('authenticated', z.undefined()),
+  'update.check': ep<UpdateStatusDto>()('settings:update', z.undefined()),
+  /** quits, installs the downloaded version and restarts */
+  'update.install': ep<null>()('settings:update', z.undefined()),
+
+  /** POS PromptPay screen polls this while waiting (only when promptpay.verify_mode = auto) */
+  'pos.verifyPromptPay': ep<{ status: 'paid' | 'pending' | 'unavailable'; message: string | null }>()(
+    'pos:create',
+    z.object({ amountSatang: z.number().int().positive(), since: z.number().int().positive(), ref: z.string().max(64).optional() }),
+  ),
+  'payments.verifyInfo': ep<{ hasApiKey: boolean }>()('settings:view', z.undefined()),
+  'payments.saveApiKey': ep<{ hasApiKey: boolean }>()('settings:update', z.object({ apiKey: secretInput })),
 } as const

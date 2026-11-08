@@ -38,16 +38,22 @@ jobs:
             app: release/win-unpacked/KPOSS.exe
             files: |
               release/*.exe
+              release/*.blockmap
+              release/latest.yml
           - os: macos-latest
             build: build:mac
             app: release/mac-arm64/KPOSS.app/Contents/MacOS/KPOSS
             files: |
               release/*.dmg
+              release/*.zip
+              release/latest-mac.yml
           - os: ubuntu-latest
             build: build:linux
             app: release/linux-unpacked/kposs
             files: |
               release/*.AppImage
+              release/*.tar.gz
+              release/latest-linux.yml
     runs-on: ${{ matrix.os }}
     env:
       # no signing identity yet: do not let electron-builder pick one up from the runner
