@@ -32,7 +32,9 @@ import { EventEmitter } from 'node:events'
 const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
 
 // Dev/testing only: run against a separate data folder (DB, backups, secrets).
-if (!app.isPackaged && process.env['KPOSS_USER_DATA']) app.setPath('userData', process.env['KPOSS_USER_DATA'])
+// Never share the installed app's data folder: `pnpm dev` defaults to %APPDATA%\KPOSS-dev, so test data
+// never shows up in an installed KPOSS (which uses %APPDATA%\KPOSS).
+if (!app.isPackaged) app.setPath('userData', process.env['KPOSS_USER_DATA'] || join(app.getPath('appData'), 'KPOSS-dev'))
 
 /**
  * One running copy per data folder (D39): two copies on the same database would both write it and
