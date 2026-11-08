@@ -67,7 +67,7 @@ pnpm test         # vitest — รันภายใต้ Node ของ Electr
 pnpm migrate      # รัน migration กับ DB ตัวอย่าง .data/dev.sqlite (แอปรันเองอัตโนมัติตอนเปิด)
 pnpm seed -- --reset  # สร้างข้อมูลตัวอย่าง (ร้าน/เมนู/สต็อก/ขาย 8 วัน) ที่ .data/userdata แล้วรันด้วย KPOSS_USER_DATA=.data/userdata pnpm dev
 pnpm lint && pnpm typecheck   # typecheck ตรวจ tsconfig.node.json และ tsconfig.web.json แยกกัน
-KPOSS_USER_DATA=/tmp/x pnpm dev  # (dev เท่านั้น) ใช้โฟลเดอร์ข้อมูลแยก เช่น ทดสอบหน้าตั้งค่าครั้งแรก · ค่าเริ่มต้นของ dev คือ %APPDATA%KPOSS-dev (แยกจากแอปที่ติดตั้งซึ่งใช้ %APPDATA%KPOSS)
+KPOSS_USER_DATA=/tmp/x pnpm dev  # (dev เท่านั้น) ใช้โฟลเดอร์ข้อมูลแยก เช่น ทดสอบหน้าตั้งค่าครั้งแรก · ค่าเริ่มต้นของ dev คือ %APPDATA%/KPOSS-dev (แยกจากแอปที่ติดตั้งซึ่งใช้ %APPDATA%/KPOSS)
 ```
 - การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D44 ผู้ใช้ยืนยันแล้วทั้งหมด — ณ 2026-11-08) อ่านก่อนเริ่มงาน
 - IPC: ทุก endpoint ประกาศใน `src/shared/api.ts` (access + zod input) → handler ใน `src/main/app-context.ts` → service → repo; ทดสอบผ่าน `createTestApp()` ใน `tests/helpers/app.ts`
