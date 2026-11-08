@@ -1,0 +1,76 @@
+# Installers for Windows / macOS / Linux (D39). Each platform is built on its own OS — electron-builder
+# cannot build a macOS .dmg or a Linux AppImage with the right native binaries on Windows.
+# Runs on a version tag (v0.2.0 …) or by hand (Actions → build → Run workflow); the installers are
+# attached to the run as artifacts. Unsigned until code-signing certificates exist.
+name: build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  installer:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            build: build:win
+            app: release/win-unpacked/KPOSS.exe
+            files: |
+              release/*.exe
+          - os: macos-latest
+            build: build:mac
+            app: release/mac-arm64/KPOSS.app/Contents/MacOS/KPOSS
+            files: |
+              release/*.dmg
+          - os: ubuntu-latest
+            build: build:linux
+            app: release/linux-unpacked/kposs
+            files: |
+              release/*.AppImage
+    runs-on: ${{ matrix.os }}
+    env:
+      # no signing identity yet: do not let electron-builder pick one up from the runner
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ${{ matrix.build }}
+      - name: smoke test (start the packaged app on an empty data folder, relaunch once)
+        if: runner.os != 'Linux'
+        run: pnpm smoke "${{ matrix.app }}" --relaunch
+      - name: smoke test (Linux, virtual display)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          xvfb-run -a pnpm smoke "${{ matrix.app }}" --relaunch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KPOSS-${{ runner.os }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error

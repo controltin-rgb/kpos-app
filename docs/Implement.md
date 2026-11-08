@@ -335,7 +335,7 @@ font Noto Sans Thai · card radius 20–22 · input height 44 · toggle 52×32 �
 - โหมด Host/Client ผ่าน LAN, บล็อกเลขบิล, คิวออฟไลน์ + sync, KDS/CFD ข้ามเครื่อง
 - Backup/Restore Tier A → B (WAL streaming) → C (PITR), หน้า Backup/Restore
 - License `.LIC` (Ed25519 + hardware id), ตั้งค่า, Audit Log หน้าเต็ม
-- ติดตั้งตัว build (electron-builder), auto-update (ถ้าต้องการ)
+- ติดตั้งตัว build (electron-builder): ตัวติดตั้ง 3 ระบบผ่าน CI, สำรองก่อนอัปเดต, 1 ตัวต่อโฟลเดอร์ข้อมูล (เฟส 4e, D39 — ดู `docs/install.md`); auto-update ยังไม่ทำ (ติดตั้งทับด้วยมือ)
 - เกณฑ์: Host ล่ม Client ขายต่อได้และ sync กลับไม่ซ้ำ, restore แล้วข้อมูลตรง, license ปลอม/ผิดเครื่องถูกปฏิเสธ
 
 ## 11. กลยุทธ์ทดสอบ

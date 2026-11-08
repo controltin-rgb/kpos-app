@@ -1,7 +1,10 @@
 appId: com.korn.kposs
 productName: KPOSS
+copyright: Copyright © Korn
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 directories:
   output: release
+  # icon.png (1024×1024, from icon.svg via `pnpm icon`) and installer.nsh
   buildResources: resources
 files:
   - out/**
@@ -11,6 +14,9 @@ files:
   - '!tests/**'
   - '!migrations/**'
   - '!migrations-client/**'
+  # better-sqlite3 ships N-API binaries for every platform in prebuilds/ — the C sources are not needed
+  - '!**/node_modules/better-sqlite3/{deps,src}/**'
+  - '!**/node_modules/better-sqlite3/binding.gyp'
 extraResources:
   # SQL migrations are read at runtime by src/main/db/migrate.ts (phase 1)
   - from: migrations
@@ -23,15 +29,40 @@ extraResources:
 asarUnpack:
   # native module must live outside the asar archive
   - node_modules/better-sqlite3/**
-npmRebuild: true
-mac:
-  target: dmg
-  category: public.app-category.business
-  identity: null # unsigned until a signing certificate is configured
+# Never rebuild native modules: better-sqlite3's prebuilt N-API binaries work with Electron as they are,
+# and a rebuild would need Python + a C++ toolchain (node-gyp) on every build machine.
+npmRebuild: false
+# updates are installed over the old version by hand for now (D39) — no auto-update feed
+publish: null
+
 win:
-  target: nsis
+  target:
+    - target: nsis
+      arch: [x64]
 nsis:
   oneClick: false
+  # D39: installed for all users in Program Files (admin) so the installer can open the LAN port
+  perMachine: true
+  allowElevation: true
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: KPOSS
+  # shop data lives in %APPDATA%\KPOSS and is never removed by the uninstaller
+  deleteAppDataOnUninstall: false
+  # resources/installer.nsh (buildResources) is picked up automatically: firewall rule for the LAN API
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.business
+  identity: null # unsigned until a signing certificate is configured (Gatekeeper: right-click → Open)
+
 linux:
-  target: AppImage
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Office
+  maintainer: Korn
+  synopsis: ระบบ POS สำหรับร้านเครื่องดื่ม/คาเฟ่

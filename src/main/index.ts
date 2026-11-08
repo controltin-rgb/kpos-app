@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, safeStorage, screen, shell } from 'electron'
@@ -21,11 +22,25 @@ import { machineFingerprint } from '@main/license/hardware-id'
 import { EVENT_CHANNEL } from '@shared/api'
 import { JOURNAL_SHIP_INTERVAL_MS } from '@shared/api-system'
 import type { JournalService } from '@main/backup/journal'
+import { preUpdateBackup, recordAppVersion } from '@main/backup/pre-update'
 
 const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
 
 // Dev/testing only: run against a separate data folder (DB, backups, secrets).
 if (!app.isPackaged && process.env['KPOSS_USER_DATA']) app.setPath('userData', process.env['KPOSS_USER_DATA'])
+
+/**
+ * One running copy per data folder (D39): two copies on the same database would both write it and
+ * both ship the change journal. A copy started by relaunch() waits for the old one to exit.
+ */
+const RELAUNCHED = process.argv.includes('--kposs-relaunched')
+const gotInstanceLock = app.requestSingleInstanceLock()
+
+/**
+ * --smoke-test=<file>: start normally, append one JSON line about the start to <file>, then quit
+ * (CI / installer checks). With --smoke-relaunch the first run relaunches itself instead of quitting.
+ */
+const SMOKE_FILE = process.argv.find((a) => a.startsWith('--smoke-test='))?.slice('--smoke-test='.length) ?? null
 
 let db: Db | null = null
 let journal: JournalService | null = null
@@ -92,8 +107,37 @@ function openSecondaryWindow(kind: 'kds' | 'cfd', senderId: number, shareSession
 }
 
 const relaunch = () => {
-  app.relaunch()
+  const args = process.argv.slice(1).filter((a) => a !== '--kposs-relaunched' && a !== '--smoke-relaunch')
+  app.relaunch({ args: [...args, '--kposs-relaunched'] })
   app.quit()
+}
+
+async function acquireInstanceLock(): Promise<boolean> {
+  if (gotInstanceLock) return true
+  if (!RELAUNCHED) return false
+  // the copy that relaunched us is still shutting down (closing the DB, shipping the journal)
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 250))
+    if (app.requestSingleInstanceLock()) return true
+  }
+  return false
+}
+
+/** --smoke-test: report once the window has rendered, then quit (or relaunch once). */
+function smokeReport(win: BrowserWindow, info: Record<string, unknown>): void {
+  if (!SMOKE_FILE) return
+  win.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      void win.webContents
+        .executeJavaScript('document.getElementById("root")?.childElementCount ?? 0')
+        .catch(() => 0)
+        .then((rendered: number) => {
+          appendFileSync(SMOKE_FILE, JSON.stringify({ pid: process.pid, version: app.getVersion(), relaunched: RELAUNCHED, rendered: rendered > 0, ...info }) + '\n')
+          if (process.argv.includes('--smoke-relaunch')) relaunch()
+          else app.quit()
+        })
+    }, 1500)
+  })
 }
 
 /** OS-backed encryption for the Client's device token (DPAPI on Windows, Keychain on macOS). */
@@ -168,7 +212,7 @@ function startClient(device: LocalDevice, cfg: HostConfig, deviceFile: string) {
   })
   registerIpc(ctx, isTrustedUrl)
   forwardEvents(ctx.events)
-  createMainWindow()
+  smokeReport(createMainWindow(), { role: 'client' })
 }
 
 function showDbErrorAndQuit(err: unknown, dbPath: string): void {
@@ -186,7 +230,20 @@ function showDbErrorAndQuit(err: unknown, dbPath: string): void {
   app.exit(1)
 }
 
+app.on('second-instance', () => {
+  // someone opened the app again: bring the running copy to the front instead
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win) {
+    if (win.isMinimized()) win.restore()
+    win.focus()
+  }
+})
+
 app.whenReady().then(async () => {
+  if (!(await acquireInstanceLock())) {
+    app.quit()
+    return
+  }
   const userData = app.getPath('userData')
   const deviceFile = join(userData, 'device.json')
   const device = loadOrCreateDevice(deviceFile)
@@ -211,6 +268,14 @@ app.whenReady().then(async () => {
     if (restore) console.info('[backup] staged restore:', restore.status)
   } catch (err) {
     console.error('[backup] applying staged restore failed:', err)
+  }
+  // D39: the first start of a new version copies the database before migrations or new code touch it
+  let preUpdate: string | null = null
+  try {
+    preUpdate = preUpdateBackup(paths.dbPath, paths.backupDir, app.getVersion())
+    if (preUpdate) console.info('[backup] pre-update copy:', preUpdate)
+  } catch (err) {
+    console.error('[backup] pre-update copy failed:', err)
   }
   let preMigrateBackup: string | null
   try {
@@ -258,7 +323,9 @@ app.whenReady().then(async () => {
   })
   registerIpc(ctx, isTrustedUrl)
   try {
+    if (preUpdate) ctx.backup.registerExisting(preUpdate, 'pre_update')
     if (preMigrateBackup) ctx.backup.registerExisting(preMigrateBackup, 'pre_migrate')
+    recordAppVersion(paths.dbPath, app.getVersion())
     ctx.backup.completeRestore(restore)
   } catch (err) {
     console.error('[backup] startup bookkeeping failed:', err)
@@ -275,7 +342,7 @@ app.whenReady().then(async () => {
   // Host: open the LAN API for paired Clients (D33)
   void ctx.lan.startIfHost()
   forwardEvents(ctx.events)
-  createMainWindow()
+  smokeReport(createMainWindow(), { role: device.role, schema: db.pragma('user_version', { simple: true }), journal: !!ctx.journal?.isStarted, preUpdate: !!preUpdate })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

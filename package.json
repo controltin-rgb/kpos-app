@@ -61,6 +61,9 @@
     "start": "electron-vite preview",
     "build": "pnpm run typecheck && electron-vite build && electron-builder --dir",
     "build:dist": "pnpm run typecheck && electron-vite build && electron-builder",
+    "build:win": "pnpm run typecheck && electron-vite build && electron-builder --win",
+    "build:mac": "pnpm run typecheck && electron-vite build && electron-builder --mac",
+    "build:linux": "pnpm run typecheck && electron-vite build && electron-builder --linux",
     "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/vitest/vitest.mjs run",
     "test:watch": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/vitest/vitest.mjs",
     "lint": "eslint .",
@@ -68,6 +71,8 @@
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
     "license:keygen": "tsx scripts/license-keygen.ts",
-    "license:issue": "tsx scripts/license-issue.ts"
+    "license:issue": "tsx scripts/license-issue.ts",
+    "icon": "electron scripts/render-icon.cjs",
+    "smoke": "node scripts/smoke-packaged.mjs"
   }
 }

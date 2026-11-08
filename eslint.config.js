@@ -13,6 +13,16 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    // plain-JS build helpers run by Node / Electron directly (pnpm smoke, pnpm icon)
+    files: ['scripts/**/*.{mjs,cjs}'],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    files: ['scripts/**/*.cjs'],
+    languageOptions: { sourceType: 'commonjs' },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
     files: ['src/renderer/**/*.{ts,tsx}'],
     languageOptions: { globals: globals.browser },
     plugins: { 'react-hooks': reactHooks, 'react-refresh': reactRefresh },
