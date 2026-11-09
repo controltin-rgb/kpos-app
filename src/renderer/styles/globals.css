@@ -50,7 +50,22 @@ html.dark {
   --danger-foreground: #ff9ea3;
   color-scheme: dark;
 }
+/* Areas that always stay light in dark mode: paper previews and the bar screen (KDS, confirmed prototype) */
 html.dark .keep-light {
+  --background: #f7f5f2;
+  --foreground: #1f2430;
+  --muted-foreground: #5c6270;
+  --border: #efebe6;
+  --card: #ffffff;
+  --card-foreground: #1f2430;
+  --accent: #ede9fb;
+  --accent-foreground: #4b2fb8;
+  --success: #ddf5e8;
+  --success-foreground: #11724a;
+  --warning: #fff4d6;
+  --warning-foreground: #7a5200;
+  --danger: #ffe3e3;
+  --danger-foreground: #a6232b;
   color-scheme: light;
   color: #1f2430;
 }

@@ -533,6 +533,16 @@ export function createAppContext(opts: AppContextOptions) {
 
     // ---- KDS --------------------------------------------------------------
     'kds.tickets': (ctx, input) => kds.tickets(ctx.actor, input.station),
+    'kds.toggleItem': (ctx, input) => {
+      kds.toggleItem(ctx.actor, input.ticketId, input.station)
+      emit({ type: 'kds.changed' })
+      return null
+    },
+    'kds.recall': (ctx, input) => {
+      const billId = kds.recall(ctx.actor, input.station)
+      if (billId) emit({ type: 'kds.changed' })
+      return billId
+    },
     'kds.advance': (ctx, input) => {
       kds.advance(ctx.actor, input.billId, input.station)
       emit({ type: 'kds.changed' })
@@ -586,6 +596,8 @@ export function createAppContext(opts: AppContextOptions) {
     // ---- reports / tax invoices --------------------------------------------
     'reports.sales': (ctx, input) => reports.salesReport(ctx.actor, input.from, input.to, input.bucket),
     'reports.profit': (ctx, input) => reports.profitReport(ctx.actor, input.from, input.to),
+    'reports.salesSummary': (ctx, input) => reports.salesSummary(ctx.actor, input.from, input.to),
+    'reports.expenses': (ctx, input) => reports.expenseReport(ctx.actor, input.from, input.to),
     'reports.zList': (ctx, input) => reports.zList(ctx.actor, input.from, input.to),
     'reports.export': async (ctx, input) => {
       const f = reports.exportCsv(ctx.actor, input.report, input.from, input.to)

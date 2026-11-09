@@ -198,6 +198,16 @@ export const thSales = {
     done: 'ทำเสร็จแล้ว',
     bump: 'ส่งมอบ (Bump)',
     empty: 'ไม่มีออเดอร์',
+    soundOn: 'เสียงเตือน: เปิด',
+    soundOff: 'เสียงเตือน: ปิด',
+    recall: 'เรียกคืนบิลล่าสุด',
+    recalled: 'เรียกคืนบิลกลับมาที่ พร้อมส่งมอบ แล้ว',
+    nothingToRecall: 'ยังไม่มีบิลที่ส่งมอบให้เรียกคืน',
+    summary: 'ต้องทำทั้งหมด',
+    summaryEmpty: 'ไม่มีเมนูค้าง',
+    itemDone: (name: string) => `${name} ทำเสร็จแล้ว`,
+    itemsDone: (done: number, all: number) => `เสร็จ ${done}/${all} แก้ว`,
+    newOrder: 'ออเดอร์ใหม่',
   },
 
   cfd: {

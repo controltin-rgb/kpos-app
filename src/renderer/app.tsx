@@ -25,6 +25,7 @@ import { LabelPage } from './pages/label'
 import { CouponsPage, PromoPage } from './pages/promo'
 import { ReceivingPage } from './pages/receiving'
 import { DeliveryCommissionPage, ReportsPage, ZReportPage } from './pages/reports'
+import { ExpenseReportPage, ExpiryReportPage, SalesSummaryPage } from './pages/reports-more'
 import { WastePage } from './pages/waste'
 import { ForbiddenPage, PlaceholderPage } from './pages/simple'
 import { AboutPage, ManualPage } from './pages/system'
@@ -52,6 +53,9 @@ const PAGES: Record<string, () => ReactNode> = {
   '/reports': () => <ReportsPage />,
   '/z-report': () => <ZReportPage />,
   '/delivery-commission': () => <DeliveryCommissionPage />,
+  '/sales-summary': () => <SalesSummaryPage />,
+  '/expense-report': () => <ExpenseReportPage />,
+  '/expiry-report': () => <ExpiryReportPage />,
   '/label': () => <LabelPage />,
   '/settings': () => <SettingsPage />,
   '/users': () => <UsersPage />,

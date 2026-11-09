@@ -44,7 +44,7 @@ export const SETTINGS = {
   /** POS sells delivery orders (Grab, Lineman, …); shops without delivery switch it off (D45) */
   'sales.delivery_enabled': { schema: z.boolean(), default: true },
   /** bar screen: a paid bill counts as served at once (no ticket waits on the KDS) — D40 */
-  'kds.complete_on_pay': { schema: z.boolean(), default: true },
+  'kds.complete_on_pay': { schema: z.boolean(), default: false },
   /** PromptPay: manual confirm only, or also an automatic check through a provider (D41) */
   'promptpay.verify_mode': { schema: z.enum(PAYMENT_VERIFY_MODES), default: 'manual' as PaymentVerifyMode },
   'promptpay.provider': { schema: z.enum(PAYMENT_PROVIDERS), default: 'mock' as PaymentProvider },

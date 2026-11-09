@@ -256,7 +256,7 @@ export interface KdsTicketDto {
   channel: DeliveryChannel | null
   status: 'new' | 'preparing' | 'ready'
   createdAt: number
-  items: { qty: number; name: string; sizeLabel: string | null; mods: { text: string; highlight: boolean }[]; note: string | null }[]
+  items: { ticketId: string; done: boolean; qty: number; name: string; sizeLabel: string | null; mods: { text: string; highlight: boolean }[]; note: string | null }[]
 }
 
 export interface SettingsDto {
@@ -501,6 +501,9 @@ export const salesApi = {
   // ---- KDS ----------------------------------------------------------------
   'kds.tickets': ep<KdsTicketDto[]>()('kds:view', z.object({ station: z.string().max(30).default('bar') })),
   'kds.advance': ep<null>()('kds:update', z.object({ billId: id, station: z.string().max(30).default('bar') })),
+  'kds.toggleItem': ep<null>()('kds:update', z.object({ ticketId: id, station: z.string().max(30).default('bar') })),
+  /** returns the recalled bill id, or null when nothing was bumped */
+  'kds.recall': ep<string | null>()('kds:update', z.object({ station: z.string().max(30).default('bar') })),
 
   // ---- settings -----------------------------------------------------------
   'settings.get': ep<SettingsDto>()('settings:view', z.undefined()),

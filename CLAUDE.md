@@ -70,7 +70,7 @@ pnpm seed -- --reset  # สร้างข้อมูลตัวอย่า�
 pnpm lint && pnpm typecheck   # typecheck ตรวจ tsconfig.node.json และ tsconfig.web.json แยกกัน
 KPOSS_USER_DATA=/tmp/x pnpm dev  # (dev เท่านั้น) ใช้โฟลเดอร์ข้อมูลแยก เช่น ทดสอบหน้าตั้งค่าครั้งแรก · ค่าเริ่มต้นของ dev คือ %APPDATA%/KPOSS-dev (แยกจากแอปที่ติดตั้งซึ่งใช้ %APPDATA%/KPOSS)
 ```
-- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D48 ผู้ใช้ยืนยันแล้วทั้งหมด — ณ 2026-11-08) อ่านก่อนเริ่มงาน
+- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D49 ผู้ใช้ยืนยันแล้วทั้งหมด — ณ 2026-11-08) อ่านก่อนเริ่มงาน
 - IPC: ทุก endpoint ประกาศใน `src/shared/api.ts` (access + zod input) → handler ใน `src/main/app-context.ts` → service → repo; ทดสอบผ่าน `createTestApp()` ใน `tests/helpers/app.ts`
 - TypeScript ปักไว้ที่ 6.0.x เพราะ typescript-eslint ยังไม่รองรับ TS 7
 - ถ้า `pnpm dev` ขึ้น error `does not provide an export named 'BrowserWindow'` แปลว่า shell มี `ELECTRON_RUN_AS_NODE=1` ค้างอยู่ ให้ `unset ELECTRON_RUN_AS_NODE`
@@ -78,7 +78,7 @@ KPOSS_USER_DATA=/tmp/x pnpm dev  # (dev เท่านั้น) ใช้โ�
 - electron-builder ตั้ง `npmRebuild: false` (ห้ามเปิด: จะเรียก node-gyp) · ตัวติดตั้ง/อัปเดตดู `docs/install.md` · CI สร้างตัวติดตั้ง 3 ระบบที่ `.github/workflows/build.yml`
 - ถ้าขึ้น `Electron uninstall` ให้รัน `node install.js` ในโฟลเดอร์ `node_modules/.pnpm/electron@*/node_modules/electron`
 - renderer อยู่ที่ `src/renderer/` (มี `index.html`, `main.tsx`, `app.tsx`), preload อยู่ที่ `src/preload/` (build เป็น CJS เพราะเปิด sandbox)
-- โหมดมืด: ใช้สีจากต้นแบบได้ตามเดิม ถ้าเพิ่มสีอ่อน/เข้มใหม่ให้เพิ่มคู่สีใน `scripts/gen-dark-css.mjs` แล้วรัน `pnpm theme:dark` · ส่วนที่ต้องคงพื้นขาว (ตัวอย่างกระดาษ) ใส่ class `keep-light`
+- โหมดมืด: ใช้สีจากต้นแบบได้ตามเดิม ถ้าเพิ่มสีอ่อน/เข้มใหม่ให้เพิ่มคู่สีใน `scripts/gen-dark-css.mjs` แล้วรัน `pnpm theme:dark` · ส่วนที่ต้องคงพื้นขาว (ตัวอย่างกระดาษ, จอบาร์ KDS) ใส่ class `keep-light` (คืนค่าตัวแปรสีโหมดสว่างให้ด้วย)
 - กล่องยืนยันใช้ `useConfirm()` (`src/renderer/components/confirm.tsx`) ห้ามใช้ `window.confirm`
 - ความลับที่ร้านกรอก (secret key คลาวด์, รหัสผ่านเข้ารหัส, API key ผู้ให้บริการชำระเงิน) เก็บผ่าน `SecretStore` (`src/main/secrets.ts`) **ไม่เก็บในฐานข้อมูล** และไม่ส่งกลับไปหน้าจอ
 - ESLint บล็อกไม่ให้ renderer import `@main/*`, `better-sqlite3`, `electron`, `node:*` (บังคับกฎข้อ 6)

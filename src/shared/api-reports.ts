@@ -31,6 +31,44 @@ export interface SalesReportDto {
   topProducts: { name: string; qty: number; totalSatang: number }[]
 }
 
+export interface SalesSummaryRowDto {
+  billCount: number
+  grossSatang: number
+  discountSatang: number
+  totalSatang: number
+  vatSatang: number
+  netSatang: number
+  commissionSatang: number
+  voidCount: number
+  refundCount: number
+  refundSatang: number
+  /** confirmed payments of paid bills by method */
+  methods: Record<string, number>
+}
+
+/** Daily sales summary (every day of the range, zero days included). */
+export interface SalesSummaryDto {
+  from: number
+  to: number
+  days: (SalesSummaryRowDto & { start: number })[]
+  total: SalesSummaryRowDto
+  /** payment methods that appear in the range, largest first */
+  methodKeys: string[]
+}
+
+export interface ExpenseReportDto {
+  from: number
+  to: number
+  totalSatang: number
+  count: number
+  inputVatSatang: number
+  bySource: Record<'drawer' | 'petty_cash' | 'bank', number>
+  categories: { categoryId: string; name: string; totalSatang: number; count: number }[]
+  days: { start: number; totalSatang: number; count: number }[]
+  /** paid sales in the same range; null without reports:view */
+  salesSatang: number | null
+}
+
 export interface ProfitReportDto {
   from: number
   to: number
@@ -78,9 +116,12 @@ export interface TaxInvoiceDto {
 export const reportsApi = {
   'reports.sales': ep<SalesReportDto>()('reports:view', z.object({ ...range, bucket: z.enum(['hour', 'day']).default('day') })),
   'reports.profit': ep<ProfitReportDto>()('reports:view_cost', z.object(range)),
+  /** range up to 400 days */
+  'reports.salesSummary': ep<SalesSummaryDto>()('reports:view', z.object(range).refine((r) => r.to > r.from && r.to - r.from <= 400 * 86_400_000)),
+  'reports.expenses': ep<ExpenseReportDto>()('expenses:view', z.object(range)),
   'reports.zList': ep<ZListItemDto[]>()('reports:view', z.object(range)),
-  /** Saves a CSV (opens in Excel, UTF-8 with BOM) through the OS save dialog. Returns the path or null. */
-  'reports.export': ep<string | null>()('reports:export', z.object({ report: z.enum(['sales', 'profit', 'waste', 'expenses', 'tax']), ...range })),
+  /** Saves a CSV (opens in Excel, UTF-8 with BOM) through the OS save dialog. Returns the path or null. expiry: lots expiring before `to` (`from` is ignored). */
+  'reports.export': ep<string | null>()('reports:export', z.object({ report: z.enum(['sales', 'sales_summary', 'profit', 'waste', 'expenses', 'expiry', 'tax']), ...range })),
 
   'tax.list': ep<TaxInvoiceDto[]>()('orders:view', z.object({ ...range, billId: id.optional() })),
   /** D19/D20: issued on request; numbering per document type, yearly reset. */

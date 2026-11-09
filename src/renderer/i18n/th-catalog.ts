@@ -215,6 +215,8 @@ export const thCatalog = {
     colStatus: 'สถานะ',
     today: 'วันนี้',
     allDates: 'ทุกวัน',
+    dateFilter: 'ช่วงวันที่',
+    byMonth: 'เลือกเดือน',
     selectHint: 'เลือกบิลจากรายการเพื่อดูรายละเอียด',
     bill: (no: string) => `บิล ${no}`,
     meta: (time: string, cashier: string) => `${time} · ${cashier}`,

@@ -6,6 +6,7 @@ import { t } from '@renderer/i18n'
 import { ApiError, call, errorMessage } from '@renderer/lib/api'
 import { useAppEvent } from '@renderer/lib/events'
 import { formatDateTimeShort, money, vatPct } from '@renderer/lib/format'
+import { monthRange, recentMonths } from '@renderer/lib/forms'
 import { useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 import { TaxIssueDialog } from './reports'
@@ -29,11 +30,12 @@ function startOfToday(): number {
 export function OrdersPage() {
   const { can } = useSession()
   const toast = useToast()
-  const [q, setQ] = useState({ search: '', status: 'all' as 'all' | 'paid' | 'void' | 'refunded', today: true, page: 1 })
+  const [q, setQ] = useState({ search: '', status: 'all' as 'all' | 'paid' | 'void' | 'refunded', date: 'today', page: 1 })
   const [list, setList] = useState<BillList | null>(null)
   const [bill, setBill] = useState<BillDetailDto | null>(null)
   const [action, setAction] = useState<'void' | 'refund' | null>(null)
   const [taxOpen, setTaxOpen] = useState(false)
+  const [months] = useState(() => recentMonths(Date.now()))
 
   const query = useCallback(
     () =>
@@ -41,7 +43,7 @@ export function OrdersPage() {
         page: q.page,
         status: q.status,
         ...(q.search ? { search: q.search } : {}),
-        ...(q.today ? { from: startOfToday() } : {}),
+        ...(q.date === 'today' ? { from: startOfToday() } : q.date === 'all' ? {} : monthRange(q.date)),
       }),
     [q],
   )
@@ -96,9 +98,16 @@ export function OrdersPage() {
                 </option>
               ))}
             </SelectInput>
-            <SelectInput aria-label={o.today} className="flex-[1_1_110px]" value={q.today ? 'today' : 'all'} onChange={(e) => setQ({ ...q, today: e.target.value === 'today', page: 1 })}>
+            <SelectInput aria-label={o.dateFilter} className="flex-[1_1_150px]" value={q.date} onChange={(e) => setQ({ ...q, date: e.target.value, page: 1 })}>
               <option value="today">{o.today}</option>
               <option value="all">{o.allDates}</option>
+              <optgroup label={o.byMonth}>
+                {months.map((m) => (
+                  <option key={m.key} value={m.key}>
+                    {m.label}
+                  </option>
+                ))}
+              </optgroup>
             </SelectInput>
           </div>
           <div className="flex items-center gap-3 px-3 text-xs font-bold text-[#7A8090]">
