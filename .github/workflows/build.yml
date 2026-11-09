@@ -1,7 +1,7 @@
 # Installers for Windows / macOS / Linux (D39). Each platform is built on its own OS — electron-builder
 # cannot build a macOS .dmg or a Linux AppImage with the right native binaries on Windows.
 # Runs on a version tag (v0.2.0 …) or by hand (Actions → build → Run workflow); the installers are
-# attached to the run as artifacts. Unsigned until code-signing certificates exist.
+# attached to the run as artifacts; a version tag also publishes a GitHub Release (auto-update feed). Unsigned until code-signing certificates exist.
 name: build
 
 on:
@@ -80,3 +80,30 @@ jobs:
           name: KPOSS-${{ runner.os }}
           path: ${{ matrix.files }}
           if-no-files-found: error
+
+  # Version tags publish a GitHub Release with every installer + latest*.yml. The repo is public, so a shop's
+  # auto-update URL can be https://github.com/<owner>/<repo>/releases/latest/download (rc tags are pre-releases
+  # and are skipped by /latest). `gh release create` uploads the files to a draft and publishes it last.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: installer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -la dist
+          pre=""; case "$TAG" in *-*) pre="--prerelease" ;; esac
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "KPOSS ${TAG#v}" --generate-notes $pre
+          fi
