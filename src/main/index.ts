@@ -28,6 +28,18 @@ import { FileSecretStore } from '@main/secrets'
 import { createUpdater, type AutoUpdaterLike, type UpdaterPort } from '@main/updater'
 import { CLOUD_SYNC_INTERVAL_MIN } from '@shared/api-system'
 import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
+
+/**
+ * electron-updater is CommonJS and exposes `autoUpdater` through a lazy getter that an ESM `import()` does not
+ * surface (the namespace had no autoUpdater, so update checks silently did nothing in 0.1.0). Load it with require.
+ * In-place update works for the NSIS installer and AppImage; not in dev, not for tar.gz.
+ */
+function loadAutoUpdater(): AutoUpdaterLike | null {
+  if (!app.isPackaged || (process.platform === 'linux' && !process.env['APPIMAGE'])) return null
+  const mod = createRequire(import.meta.url)('electron-updater') as { autoUpdater?: AutoUpdaterLike }
+  return mod.autoUpdater ?? null
+}
 
 const isDev = !app.isPackaged && !!process.env['ELECTRON_RENDERER_URL']
 
@@ -209,7 +221,7 @@ function startClient(device: LocalDevice, cfg: HostConfig, deviceFile: string) {
     feedUrl: () => feed.url,
     autoCheck: () => feed.autoCheck,
     onChange: (status) => ctx.events.emit('event', { type: 'update.state', status }),
-    load: async () => (app.isPackaged && (process.platform !== 'linux' || !!process.env['APPIMAGE']) ? ((await import('electron-updater')).autoUpdater as unknown as AutoUpdaterLike) : null),
+    load: async () => loadAutoUpdater(),
     canInstall: process.platform !== 'darwin',
     log: (m, e) => console.error(m, e),
   })
@@ -326,9 +338,7 @@ app.whenReady().then(async () => {
     feedUrl: () => settingsForUpdate?.get('update.feed_url') ?? '',
     autoCheck: () => settingsForUpdate?.get('update.auto_check') ?? false,
     onChange: (status) => updateEvents.emit('event', { type: 'update.state', status }),
-    // in-place update works for the NSIS installer and AppImage; not in dev, not for tar.gz
-    load: async () =>
-      app.isPackaged && (process.platform !== 'linux' || !!process.env['APPIMAGE']) ? ((await import('electron-updater')).autoUpdater as unknown as AutoUpdaterLike) : null,
+    load: async () => loadAutoUpdater(),
     canInstall: process.platform !== 'darwin', // Squirrel.Mac needs a signed app (code signing not done yet)
     log: (m, e) => console.error(m, e),
   })

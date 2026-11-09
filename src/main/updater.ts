@@ -63,7 +63,7 @@ export function createUpdater(deps: UpdaterDeps): UpdaterPort {
   async function ensure(): Promise<AutoUpdaterLike | null> {
     if (au !== undefined) return au
     try {
-      au = await deps.load()
+      au = (await deps.load()) ?? null // undefined would leave the updater "idle" forever instead of "unsupported"
     } catch (err) {
       deps.log?.('[update] updater unavailable', err)
       au = null
