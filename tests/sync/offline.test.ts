@@ -1,3 +1,4 @@
+import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openDatabase } from '@main/db/connection'
@@ -21,9 +22,21 @@ afterEach(async () => {
   while (stops.length) await stops.pop()!()
 })
 
+/** A port the OS hands out (random ports can hit Windows' reserved ranges → EACCES on CI); fixed per test so the Host can go offline and back. */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer()
+    srv.once('error', reject)
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address() as { port: number }
+      srv.close(() => resolve(port))
+    })
+  })
+}
+
 /** Host + a paired Client with its offline store, logged in, shift open, snapshot pulled. */
 async function setup(opts: { policy?: 'none' | 'daily' } = {}) {
-  const port = 20_000 + Math.floor(Math.random() * 30_000)
+  const port = await freePort()
   const t = createTestApp({ lan: { certDir: tmpDir('kposs-cert-'), bindHost: '127.0.0.1', listenPort: port } })
   stops.push(() => t.app.lan.stop())
   await t.setup()
