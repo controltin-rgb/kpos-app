@@ -1,7 +1,7 @@
 /**
  * Dev helper: migrate a sample database.
- *   npm run migrate              → .data/dev.sqlite
- *   npm run migrate -- path.db   → given file
+ *   pnpm migrate              → .data/dev.sqlite
+ *   pnpm migrate -- path.db   → given file
  * The app itself migrates automatically at startup (src/main/index.ts).
  */
 import { resolve } from 'node:path'

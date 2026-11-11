@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BaseUnit, IngredientDto, LotDto } from '@shared/api-sales'
 import { MoneyInput } from '@renderer/components/modal'
 import { Card, Chip, DangerButton, Field, GradientButton, IconTile, OutlineButton, PageHeader, Pagination, SelectInput, TextInput, Toggle, useToast, type Tone } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage, fieldErrors } from '@renderer/lib/api'
 import { formatDateTimeShort, money, qty } from '@renderer/lib/format'
@@ -38,6 +39,7 @@ const emptyIngredient = { name: '', baseUnit: 'ml' as BaseUnit, pack: '1000', mi
 export function InventoryPage() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const [items, setItems] = useState<IngredientDto[]>([])
   const [filter, setFilter] = useState<'all' | IngredientDto['status']>('all')
   const [search, setSearch] = useState('')
@@ -143,7 +145,7 @@ export function InventoryPage() {
   }
 
   async function remove() {
-    if (!cur || !window.confirm(t.crud.confirmDelete(cur.name))) return
+    if (!cur || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(cur.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('inventory.deleteIngredient', { id: cur.id })
       toast(t.crud.deleted)

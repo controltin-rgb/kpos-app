@@ -1,9 +1,10 @@
-import type { Actor } from '@main/auth/actor'
+import { can, type Actor } from '@main/auth/actor'
 import type { Db } from '@main/db/connection'
 import { renderTaxInvoice } from '@main/print/tax-invoice'
 import type { ParsedInput } from '@shared/api'
-import type { ChannelKey, ProfitReportDto, SalesReportDto, TaxInvoiceDto, ZListItemDto } from '@shared/api-reports'
+import type { ChannelKey, ExpenseReportDto, ProfitReportDto, SalesReportDto, SalesSummaryDto, SalesSummaryRowDto, TaxInvoiceDto, ZListItemDto } from '@shared/api-reports'
 import { AppError } from '@shared/errors'
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import { uuidv7 } from '@shared/id'
 import { formatBaht, mulDivHalfUp } from '@shared/money'
 import { isValidThaiTaxId } from '@shared/tax-id'
@@ -17,6 +18,18 @@ import type { StockOpsService } from './stock-ops.service'
 
 const bkk = (ms: number) => new Date(ms + 7 * 3_600_000) // shift to Asia/Bangkok wall clock (no DST)
 const pad = (n: number) => String(n).padStart(2, '0')
+const DAY = 86_400_000
+const METHOD_TH: Record<string, string> = { cash: "เงินสด", promptpay: "PromptPay", card: "บัตร", transfer: "โอนเงิน", delivery: "เดลิเวอรี", other: "อื่นๆ" }
+const BKK = 7 * 3_600_000
+/** Start of the Bangkok day that contains ms. */
+const dayStart = (ms: number) => Math.floor((ms + BKK) / DAY) * DAY - BKK
+/** Bangkok day starts covering [from, to). */
+function daysIn(from: number, to: number): number[] {
+  const out: number[] = []
+  for (let d = dayStart(from); d < to; d += DAY) out.push(d)
+  return out
+}
+const emptyRow = (): SalesSummaryRowDto => ({ billCount: 0, grossSatang: 0, discountSatang: 0, totalSatang: 0, vatSatang: 0, netSatang: 0, commissionSatang: 0, voidCount: 0, refundCount: 0, refundSatang: 0, methods: {} })
 
 /** Reports (sales, profit by ledger cost, Z list, CSV export) and tax invoices (D19/D20). */
 export class ReportService {
@@ -30,6 +43,7 @@ export class ReportService {
     private readonly settings: SettingsService,
     private readonly audit: AuditService,
     private readonly now: () => number = Date.now,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {}
 
   // ===========================================================================
@@ -100,6 +114,79 @@ export class ReportService {
     }
   }
 
+  /** One row per Bangkok day (paid bills; voids and refunds counted by the day the bill was made). */
+  salesSummary(actor: Actor, from: number, to: number): SalesSummaryDto {
+    const bills = this.db
+      .prepare(`SELECT id, status, subtotal_satang, discount_satang, vat_satang, total_satang, ifnull(commission_satang, 0) AS commission, created_at
+         FROM bills WHERE branch_id = ? AND created_at >= ? AND created_at < ? AND status IN ('paid', 'void', 'refunded')`)
+      .all(actor.branchId, from, to) as { id: string; status: string; subtotal_satang: number; discount_satang: number; vat_satang: number; total_satang: number; commission: number; created_at: number }[]
+    const pays = this.db
+      .prepare(
+        `SELECT b.created_at, p.method, sum(p.amount_satang) AS amount FROM payments p JOIN bills b ON b.id = p.bill_id
+         WHERE b.branch_id = ? AND b.status = 'paid' AND p.status = 'confirmed' AND b.created_at >= ? AND b.created_at < ? GROUP BY b.id, p.method`,
+      )
+      .all(actor.branchId, from, to) as { created_at: number; method: string; amount: number }[]
+    const rows = new Map(daysIn(from, to).map((d) => [d, emptyRow()]))
+    const total = emptyRow()
+    const at = (ms: number) => rows.get(dayStart(ms))!
+    for (const b of bills) {
+      for (const r of [at(b.created_at), total]) {
+        if (b.status === 'void') r.voidCount++
+        else if (b.status === 'refunded') {
+          r.refundCount++
+          r.refundSatang += b.total_satang
+        } else {
+          r.billCount++
+          r.grossSatang += b.subtotal_satang
+          r.discountSatang += b.discount_satang
+          r.totalSatang += b.total_satang
+          r.vatSatang += b.vat_satang
+          r.netSatang += b.total_satang - b.vat_satang
+          r.commissionSatang += b.commission
+        }
+      }
+    }
+    for (const p of pays) for (const r of [at(p.created_at), total]) r.methods[p.method] = (r.methods[p.method] ?? 0) + p.amount
+    return {
+      from,
+      to,
+      days: [...rows].map(([start, r]) => ({ start, ...r })),
+      total,
+      methodKeys: Object.keys(total.methods).sort((a, b) => total.methods[b]! - total.methods[a]!),
+    }
+  }
+
+  expenseReport(actor: Actor, from: number, to: number): ExpenseReportDto {
+    const sum = this.expenses.summary(actor, from, to)
+    const list = this.db
+      .prepare(`SELECT category_id, amount_satang, spent_at FROM expenses WHERE branch_id = ? AND voided_at IS NULL AND spent_at >= ? AND spent_at < ?`)
+      .all(actor.branchId, from, to) as { category_id: string; amount_satang: number; spent_at: number }[]
+    const counts = new Map<string, number>()
+    const days = new Map(daysIn(from, to).map((d) => [d, { start: d, totalSatang: 0, count: 0 }]))
+    for (const e of list) {
+      counts.set(e.category_id, (counts.get(e.category_id) ?? 0) + 1)
+      const d = days.get(dayStart(e.spent_at))
+      if (d) {
+        d.totalSatang += e.amount_satang
+        d.count++
+      }
+    }
+    const salesSatang = can(actor, 'reports:view')
+      ? (this.db.prepare(`SELECT ifnull(sum(total_satang), 0) FROM bills WHERE branch_id = ? AND status = 'paid' AND created_at >= ? AND created_at < ?`).pluck().get(actor.branchId, from, to) as number)
+      : null
+    return {
+      from,
+      to,
+      totalSatang: sum.totalSatang,
+      count: list.length,
+      inputVatSatang: sum.inputVatSatang,
+      bySource: sum.bySource,
+      categories: sum.byCategory.map((c) => ({ ...c, count: counts.get(c.categoryId) ?? 0 })),
+      days: [...days.values()],
+      salesSatang,
+    }
+  }
+
   /** COGS = lot costs taken for paid bills (incl. shortages settled later from new lots). */
   profitReport(actor: Actor, from: number, to: number): ProfitReportDto {
     const items = this.db
@@ -158,7 +245,9 @@ export class ReportService {
   }
 
   /** CSV (UTF-8 with BOM so Excel shows Thai correctly). */
-  exportCsv(actor: Actor, report: 'sales' | 'profit' | 'waste' | 'expenses' | 'tax', from: number, to: number): { name: string; content: string } {
+  exportCsv(actor: Actor, report: ParsedInput<'reports.export'>['report'], from: number, to: number): { name: string; content: string } {
+    // stock-based reports need the inventory feature (D51)
+    if ((report === 'profit' || report === 'waste' || report === 'expiry') && !this.features().inventory) throw new AppError('FEATURE_NOT_LICENSED', { feature: 'inventory' })
     const money = (s: number) => formatBaht(s).replace(/,/g, '')
     const cell = (v: string | number) => {
       const s = String(v)
@@ -181,6 +270,18 @@ export class ReportService {
         ['เลขที่บิล', 'วันที่เวลา', 'สถานะ', 'ประเภท', 'ค่าย', 'Order ID', 'ยอดก่อนส่วนลด', 'ส่วนลด', 'VAT', 'ยอดสุทธิ', 'ค่าคอมมิชชัน', 'ชำระด้วย'],
         ...bills.map((b) => [b['bill_no']!, dt(b['created_at'] as number), b['status']!, b['order_type']!, b['channel'] ?? '', b['ext_order_id'] ?? '', money(b['subtotal_satang'] as number), money(b['discount_satang'] as number), money(b['vat_satang'] as number), money(b['total_satang'] as number), money(b['commission'] as number), b['method'] ?? '']),
       ]
+    } else if (report === 'sales_summary') {
+      const r = this.salesSummary(actor, from, to)
+      const day = (ms: number) => dt(ms).slice(0, 10)
+      const line = (label: string, x: SalesSummaryRowDto) => [label, x.billCount, money(x.grossSatang), money(x.discountSatang), money(x.totalSatang), money(x.vatSatang), money(x.netSatang), money(x.commissionSatang), ...r.methodKeys.map((m) => money(x.methods[m] ?? 0)), x.voidCount, x.refundCount, money(x.refundSatang)]
+      rows = [
+        ['วันที่', 'จำนวนบิล', 'ยอดก่อนส่วนลด', 'ส่วนลด', 'ยอดขาย', 'VAT', 'ยอดก่อน VAT', 'ค่าคอมมิชชัน', ...r.methodKeys.map((m) => METHOD_TH[m] ?? m), 'บิลยกเลิก', 'บิลคืนเงิน', 'ยอดคืนเงิน'],
+        ...r.days.map((d) => line(day(d.start), d)),
+        line('รวม', r.total),
+      ]
+    } else if (report === 'expiry') {
+      const lots = this.stockOps.expiring(actor, Math.min(60, Math.max(0, Math.round((to - this.now()) / DAY))))
+      rows = [['วัตถุดิบ', 'ล็อต', 'คงเหลือ', 'หน่วย', 'มูลค่า', 'หมดอายุ', 'เหลือ (วัน)'], ...lots.map((l) => [l.ingredientName, l.lotNo ?? '', l.qtyRemainingMilli / 1000, l.baseUnit, money(l.valueSatang), dt(l.expiresAt).slice(0, 10), Math.floor((dayStart(l.expiresAt) - dayStart(this.now())) / DAY)])]
     } else if (report === 'profit') {
       const p = this.profitReport(actor, from, to)
       rows = [['สินค้า', 'จำนวน', 'ยอดขายก่อน VAT', 'ต้นทุนวัตถุดิบ', 'กำไรขั้นต้น'], ...p.products.map((r) => [r.name, r.qty, money(r.netSatang), money(r.cogsSatang), money(r.profitSatang)])]

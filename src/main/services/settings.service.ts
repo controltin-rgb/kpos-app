@@ -7,8 +7,11 @@ import { AppError } from '@shared/errors'
 import { uuidv7 } from '@shared/id'
 import { DEFAULT_VAT_RATE_BP } from '@shared/money'
 import { isValidPromptPayId } from '@shared/promptpay'
+import { PAYMENT_PROVIDERS, PAYMENT_VERIFY_MODES, type PaymentProvider, type PaymentVerifyMode } from '@shared/payment-verify'
 import { isValidThaiTaxId } from '@shared/tax-id'
 import type { AuditService } from './audit.service'
+
+const httpsUrl = z.string().trim().max(300).refine((v) => v === '' || /^https:\/\//.test(v), 'https')
 
 /** Typed settings with defaults. Stored in `settings` as JSON (global scope for now). */
 export const SETTINGS = {
@@ -33,6 +36,33 @@ export const SETTINGS = {
   'tax.seller_tax_id': { schema: z.string().trim().refine((v) => v === '' || isValidThaiTaxId(v), 'invalid'), default: '' },
   'tax.seller_branch': { schema: z.string().trim().regex(/^\d{5}$/), default: '00000' },
   'tax.seller_address': { schema: z.string().trim().max(300), default: '' },
+  /** D25: daily snapshot time (Asia/Bangkok), daily copies kept, off-site folder (USB/NAS/cloud-sync folder) */
+  'backup.daily_time': { schema: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), default: '03:00' },
+  'backup.keep_daily': { schema: z.union([z.literal(14), z.literal(30), z.literal(90)]), default: 14 as 14 | 30 | 90 },
+  'backup.offsite_enabled': { schema: z.boolean(), default: false },
+  'backup.offsite_dir': { schema: z.string().trim().max(400), default: '' },
+  /** POS sells delivery orders (Grab, Lineman, …); shops without delivery switch it off (D45) */
+  'sales.delivery_enabled': { schema: z.boolean(), default: true },
+  /** bar screen: a paid bill counts as served at once (no ticket waits on the KDS) — D40 */
+  'kds.complete_on_pay': { schema: z.boolean(), default: false },
+  /** PromptPay: manual confirm only, or also an automatic check through a provider (D41) */
+  'promptpay.verify_mode': { schema: z.enum(PAYMENT_VERIFY_MODES), default: 'manual' as PaymentVerifyMode },
+  'promptpay.provider': { schema: z.enum(PAYMENT_PROVIDERS), default: 'mock' as PaymentProvider },
+  'promptpay.merchant_id': { schema: z.string().trim().max(80), default: '' },
+  'promptpay.provider_branch': { schema: z.string().trim().max(80), default: '' },
+  'promptpay.provider_endpoint': { schema: httpsUrl, default: '' },
+  /** auto-update feed: folder URL holding latest.yml / latest-mac.yml / latest-linux.yml (D42) */
+  'update.feed_url': { schema: z.string().trim().max(300).refine((v) => v === '' || /^https?:\/\//.test(v), 'url'), default: '' },
+  'update.auto_check': { schema: z.boolean(), default: true },
+  /** encrypted cloud copy of snapshots + change journal, S3-compatible storage (D43) */
+  'cloud.enabled': { schema: z.boolean(), default: false },
+  'cloud.endpoint': { schema: httpsUrl, default: '' },
+  'cloud.region': { schema: z.string().trim().max(40), default: 'auto' },
+  'cloud.bucket': { schema: z.string().trim().max(63), default: '' },
+  'cloud.prefix': { schema: z.string().trim().max(120).regex(/^[A-Za-z0-9._/-]*$/), default: 'kposs' },
+  'cloud.access_key_id': { schema: z.string().trim().max(128), default: '' },
+  /** LAN API port of the Host (D33) */
+  'lan.port': { schema: z.number().int().min(1024).max(65535), default: 3000 },
 } as const
 
 export type SettingKey = keyof typeof SETTINGS
@@ -40,7 +70,7 @@ export type SettingValue<K extends SettingKey> = z.infer<(typeof SETTINGS)[K]['s
 export type SettingsMap = { [K in SettingKey]: SettingValue<K> }
 
 /** Settings an operator may edit from the Settings page (license cap comes from the license file later). */
-export const EDITABLE_SETTINGS = ['vat.rate_bp', 'bill.reset_policy', 'promptpay.id', 'receipt.header', 'receipt.footer', 'receipt.paper_mm', 'stock.count_separate_approver', 'points.earn_every_satang', 'points.redeem_points', 'points.redeem_value_satang', 'tax.seller_name', 'tax.seller_tax_id', 'tax.seller_branch', 'tax.seller_address'] as const
+export const EDITABLE_SETTINGS = ['vat.rate_bp', 'bill.reset_policy', 'promptpay.id', 'receipt.header', 'receipt.footer', 'receipt.paper_mm', 'stock.count_separate_approver', 'points.earn_every_satang', 'points.redeem_points', 'points.redeem_value_satang', 'tax.seller_name', 'tax.seller_tax_id', 'tax.seller_branch', 'tax.seller_address', 'backup.daily_time', 'backup.keep_daily', 'backup.offsite_enabled', 'backup.offsite_dir', 'lan.port', 'kds.complete_on_pay', 'sales.delivery_enabled', 'promptpay.verify_mode', 'promptpay.provider', 'promptpay.merchant_id', 'promptpay.provider_branch', 'promptpay.provider_endpoint', 'update.feed_url', 'update.auto_check', 'cloud.enabled', 'cloud.endpoint', 'cloud.region', 'cloud.bucket', 'cloud.prefix', 'cloud.access_key_id'] as const
 
 export class SettingsService {
   private readonly org: OrgRepo

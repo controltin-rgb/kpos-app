@@ -113,12 +113,12 @@ POS ร้านเครื่องดื่ม ใช้งานต่อเ
 ```bash
 mkdir kposs && cd kposs && git init
 # copy ไฟล์ตาม §0 ก่อน
-npm init -y
-npm i better-sqlite3 zod better-auth react react-dom react-router-dom
-npm i -D typescript electron electron-vite electron-builder vite tailwindcss vitest @types/better-sqlite3 eslint
-npx shadcn@latest init
+pnpm init
+pnpm add better-sqlite3 zod better-auth react react-dom react-router-dom
+pnpm add -D typescript electron electron-vite electron-builder vite tailwindcss vitest @types/better-sqlite3 eslint
+pnpm dlx shadcn@latest init
 ```
-- better-sqlite3 เป็น native module: ใช้ `electron-rebuild` (หรือ `electron-builder install-app-deps`) ให้ตรงเวอร์ชัน Electron และตั้งให้ unpack จาก asar
+- better-sqlite3 เป็น native module: ใช้ prebuilt ที่มากับแพ็กเกจ (ไม่ต้องคอมไพล์; อย่าอนุมัติ build script ของ better-sqlite3 ใน pnpm) และตั้งให้ unpack จาก asar
 - เปิด TypeScript `strict`, ตั้ง path alias `@shared`, `@main`, `@renderer`
 
 ---
@@ -234,8 +234,8 @@ npx shadcn@latest init
 
 ### 6.10 Backup / Restore / PITR
 - **Tier A (เปิดใช้เฟสแรก):** snapshot รายวัน (ใช้ `VACUUM INTO` หรือ backup API ของ better-sqlite3) เก็บตามนโยบาย retention
-- **Tier B (เฟส 4):** WAL streaming
-- **Tier C:** snapshot + replay ledger เพื่อกู้ย้อนเวลา
+- **Tier B (เฟส 4d, D38):** บันทึกการเปลี่ยนแปลงในแอป (TEMP trigger → `change_journal` → ไฟล์ segment ทุก 10 วินาที ในเครื่อง + นอกเครื่อง) แทน WAL streaming/Litestream — `src/main/backup/journal.ts`
+- **Tier C:** snapshot + เล่นการเปลี่ยนแปลงซ้ำถึงเวลาที่เลือก (ทุกตาราง ไม่ใช่แค่ ledger) เก็บย้อนหลัง 14 วัน; timeline ใหม่หลัง restore/migrate
 - Restore ต้องมีสิทธิ์สูงสุด, ยืนยัน 2 ขั้น, สำรองสถานะปัจจุบันก่อนเสมอ, ลง audit
 
 ### 6.11 License
@@ -312,7 +312,7 @@ font Noto Sans Thai · card radius 20–22 · input height 44 · toggle 52×32 �
 
 **เฟส 0 — โครงโปรเจกต์**
 - Electron + Vite + React + Tailwind + shadcn, TypeScript strict, ESLint, vitest, i18n ไทย
-- เกณฑ์: `npm run dev` เปิดหน้าต่างว่างได้, `npm run build` ผ่าน, better-sqlite3 โหลดใน Electron ได้
+- เกณฑ์: `pnpm dev` เปิดหน้าต่างว่างได้, `pnpm build` ผ่าน, better-sqlite3 โหลดใน Electron ได้
 
 **เฟส 1 — ฐานข้อมูลและแกนระบบ**
 - connection + PRAGMA, migration runner (+backup ก่อนรัน), migration 0001 (ตารางทั้งหมดใน §5.2 + trigger §5.3)
@@ -335,7 +335,7 @@ font Noto Sans Thai · card radius 20–22 · input height 44 · toggle 52×32 �
 - โหมด Host/Client ผ่าน LAN, บล็อกเลขบิล, คิวออฟไลน์ + sync, KDS/CFD ข้ามเครื่อง
 - Backup/Restore Tier A → B (WAL streaming) → C (PITR), หน้า Backup/Restore
 - License `.LIC` (Ed25519 + hardware id), ตั้งค่า, Audit Log หน้าเต็ม
-- ติดตั้งตัว build (electron-builder), auto-update (ถ้าต้องการ)
+- ติดตั้งตัว build (electron-builder): ตัวติดตั้ง 3 ระบบผ่าน CI, สำรองก่อนอัปเดต, 1 ตัวต่อโฟลเดอร์ข้อมูล (เฟส 4e, D39 — ดู `docs/install.md`); auto-update ยังไม่ทำ (ติดตั้งทับด้วยมือ)
 - เกณฑ์: Host ล่ม Client ขายต่อได้และ sync กลับไม่ซ้ำ, restore แล้วข้อมูลตรง, license ปลอม/ผิดเครื่องถูกปฏิเสธ
 
 ## 11. กลยุทธ์ทดสอบ

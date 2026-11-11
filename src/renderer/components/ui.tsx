@@ -204,6 +204,14 @@ export function Card({ children, className }: { children: ReactNode; className?:
   return <section className={cn('rounded-[22px] bg-white p-5 shadow-[0_1px_3px_rgba(40,30,60,0.08)]', className)}>{children}</section>
 }
 
+/** At most 7 slots: all pages when they fit, otherwise first, last and the pages around the current one (null = "…"). */
+function pageWindow(page: number, pages: number): (number | null)[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1)
+  if (page <= 4) return [1, 2, 3, 4, 5, null, pages]
+  if (page >= pages - 3) return [1, null, pages - 4, pages - 3, pages - 2, pages - 1, pages]
+  return [1, null, page - 1, page, page + 1, null, pages]
+}
+
 /** Page buttons (6–7 rows per page per the design system). */
 export function Pagination({ page, pageSize, total, onPage }: { page: number; pageSize: number; total: number; onPage: (p: number) => void }) {
   const pages = Math.max(1, Math.ceil(total / pageSize))
@@ -214,7 +222,12 @@ export function Pagination({ page, pageSize, total, onPage }: { page: number; pa
       <button type="button" className={cn(btn, 'bg-[#F7F5F2]')} disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label={t.common.pagination.prev}>
         <Icon name="chevronLeft" />
       </button>
-      {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
+      {pageWindow(page, pages).map((p, i) =>
+        p === null ? (
+          <span key={`gap${i}`} className="w-6 text-center text-sm text-muted-foreground" aria-hidden="true">
+            …
+          </span>
+        ) : (
         <button
           key={p}
           type="button"
@@ -225,7 +238,8 @@ export function Pagination({ page, pageSize, total, onPage }: { page: number; pa
         >
           {p}
         </button>
-      ))}
+        ),
+      )}
       <button type="button" className={cn(btn, 'bg-[#F7F5F2]')} disabled={page >= pages} onClick={() => onPage(page + 1)} aria-label={t.common.pagination.next}>
         <Icon name="chevronRight" />
       </button>

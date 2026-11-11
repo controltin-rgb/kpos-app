@@ -12,6 +12,8 @@
   "include": [
     "src/renderer/**/*",
     "src/shared/**/*",
-    "src/preload/*.d.ts"
+    "src/preload/*.d.ts",
+    "tools/license-manager/**/*",
+    "scripts/license-types.ts"
   ]
 }

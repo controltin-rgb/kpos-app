@@ -106,17 +106,72 @@ describe('checkout → BOM stock deduction (§6.1, phase 2 criteria)', () => {
     expect(bill).toMatchObject({ orderType: 'delivery', channel: 'grab', extOrderId: 'GF-123', commissionBp: 3_000, commissionSatang: 1_350 })
   })
 
-  it('creates KDS tickets and advances them', async () => {
+  it('when "paid = done at once" is switched on, nothing waits on the bar screen (D40)', async () => {
     const { t, shop, sell } = await ready()
+    await t.call(1, 'settings.update', { 'kds.complete_on_pay': true })
+    const { bill } = await sell([{ sizeId: shop.sizes.s22 }])
+    expect(await t.call(1, 'kds.tickets', { station: 'bar' })).toEqual([])
+    // still recorded, completed at payment time; never bumped, so it cannot be recalled
+    const row = t.db.prepare('SELECT status, started_at, ready_at, completed_at, created_at, bumped_at FROM kds_tickets WHERE bill_id = ?').get(bill.id) as Record<string, unknown>
+    expect(row).toMatchObject({ status: 'completed', completed_at: row['created_at'], ready_at: row['created_at'], started_at: row['created_at'], bumped_at: null })
+    expect(await t.call(1, 'kds.recall', { station: 'bar' })).toBeNull()
+  })
+
+  it('a paid bill goes to the bar screen by default: NEW → PREPARING → READY → served (D49)', async () => {
+    const { t, shop, sell } = await ready()
+    expect((await t.call(1, 'settings.get'))['kds.complete_on_pay']).toBe(false)
     const { bill } = await sell([{ sizeId: shop.sizes.s22, optionIds: [shop.normalSweet, shop.extraPearl] }])
     const [ticket] = await t.call(1, 'kds.tickets', { station: 'bar' })
     expect(ticket).toMatchObject({ billNo: bill.billNo, status: 'new' })
+    expect(ticket!.items[0]).toMatchObject({ done: false })
     expect(ticket!.items[0]!.mods).toContainEqual({ text: 'ไข่มุกเพิ่ม', highlight: true })
     await t.call(1, 'kds.advance', { billId: bill.id, station: 'bar' })
     await t.call(1, 'kds.advance', { billId: bill.id, station: 'bar' })
     expect((await t.call(1, 'kds.tickets', { station: 'bar' }))[0]!.status).toBe('ready')
     await t.call(1, 'kds.advance', { billId: bill.id, station: 'bar' })
     expect(await t.call(1, 'kds.tickets', { station: 'bar' })).toEqual([])
+  })
+
+  it('ticks drinks one by one; ticking a NEW bill starts it', async () => {
+    const { t, shop, sell } = await ready()
+    const { bill } = await sell([{ sizeId: shop.sizes.s22 }, { sizeId: shop.sizes.s16 }])
+    const [ticket] = await t.call(1, 'kds.tickets', { station: 'bar' })
+    expect(ticket!.items).toHaveLength(2)
+    await t.call(1, 'kds.toggleItem', { ticketId: ticket!.items[0]!.ticketId, station: 'bar' })
+    let [now] = await t.call(1, 'kds.tickets', { station: 'bar' })
+    expect(now).toMatchObject({ billId: bill.id, status: 'preparing' })
+    expect(now!.items.map((i) => i.done)).toEqual([true, false])
+    // untick
+    await t.call(1, 'kds.toggleItem', { ticketId: ticket!.items[0]!.ticketId, station: 'bar' })
+    ;[now] = await t.call(1, 'kds.tickets', { station: 'bar' })
+    expect(now!.items.map((i) => i.done)).toEqual([false, false])
+    // READY tickets cannot be ticked
+    await t.call(1, 'kds.advance', { billId: bill.id, station: 'bar' })
+    await t.fails('NOT_EDITABLE', 1, 'kds.toggleItem', { ticketId: ticket!.items[1]!.ticketId, station: 'bar' })
+  })
+
+  it('recalls the last bumped bill back to READY, newest first', async () => {
+    const { t, shop, sell } = await ready()
+    const first = (await sell([{ sizeId: shop.sizes.s22 }])).bill
+    t.advance(1_000)
+    const second = (await sell([{ sizeId: shop.sizes.s16 }])).bill
+    for (const b of [first, second]) {
+      for (let i = 0; i < 3; i++) {
+        await t.call(1, 'kds.advance', { billId: b.id, station: 'bar' })
+        t.advance(1_000)
+      }
+    }
+    expect(await t.call(1, 'kds.tickets', { station: 'bar' })).toEqual([])
+    expect(await t.call(1, 'kds.recall', { station: 'bar' })).toBe(second.id)
+    expect(await t.call(1, 'kds.tickets', { station: 'bar' })).toMatchObject([{ billId: second.id, status: 'ready' }])
+    expect(await t.call(1, 'kds.recall', { station: 'bar' })).toBe(first.id)
+    expect(await t.call(1, 'kds.recall', { station: 'bar' })).toBeNull()
+    // a voided bill is never recalled
+    await t.call(1, 'kds.advance', { billId: first.id, station: 'bar' })
+    await t.call(1, 'orders.void', { id: first.id, reason: 'ทดสอบ' })
+    await t.call(1, 'kds.advance', { billId: second.id, station: 'bar' })
+    expect(await t.call(1, 'kds.recall', { station: 'bar' })).toBe(second.id)
+    expect(await t.call(1, 'kds.recall', { station: 'bar' })).toBeNull()
   })
 })
 

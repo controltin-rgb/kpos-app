@@ -3,6 +3,7 @@
 @import '@fontsource/noto-sans-thai/500.css';
 @import '@fontsource/noto-sans-thai/600.css';
 @import '@fontsource/noto-sans-thai/700.css';
+@import './dark.css';
 
 /*
  * KPOSS design tokens — source of truth: docs/design/*.dc.html and docx §5.
@@ -28,6 +29,45 @@
   --danger-foreground: #a6232b;
   --ring: #9776f6;
   --radius: 20px;
+  color-scheme: light;
+}
+
+/* Dark theme (header toggle: light / system / dark). Hard-coded design colours are re-mapped in dark.css. */
+html.dark {
+  --background: #15171c;
+  --foreground: #e8eaf0;
+  --muted-foreground: #a3a9b6;
+  --border: #343a46;
+  --card: #1e2128;
+  --card-foreground: #e8eaf0;
+  --accent: #2e2754;
+  --accent-foreground: #c3b5ff;
+  --success: #143a2a;
+  --success-foreground: #6fe3ae;
+  --warning: #3a3015;
+  --warning-foreground: #f2c55c;
+  --danger: #45191d;
+  --danger-foreground: #ff9ea3;
+  color-scheme: dark;
+}
+/* Areas that always stay light in dark mode: paper previews and the bar screen (KDS, confirmed prototype) */
+html.dark .keep-light {
+  --background: #f7f5f2;
+  --foreground: #1f2430;
+  --muted-foreground: #5c6270;
+  --border: #efebe6;
+  --card: #ffffff;
+  --card-foreground: #1f2430;
+  --accent: #ede9fb;
+  --accent-foreground: #4b2fb8;
+  --success: #ddf5e8;
+  --success-foreground: #11724a;
+  --warning: #fff4d6;
+  --warning-foreground: #7a5200;
+  --danger: #ffe3e3;
+  --danger-foreground: #a6232b;
+  color-scheme: light;
+  color: #1f2430;
 }
 
 @theme inline {

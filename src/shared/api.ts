@@ -5,7 +5,11 @@ import { promoApi } from './api-promo'
 import { reportsApi } from './api-reports'
 import { dashboardApi } from './api-dashboard'
 import { stockApi } from './api-stock'
+import { aboutApi, licenseApi, opsApi, systemApi } from './api-system'
+import { lanApi } from './api-lan'
+import type { LicenseFeatures } from './license'
 import type { Permission } from './permissions'
+import type { UpdateStatusDto } from './api-system'
 
 /**
  * IPC contract: every renderer → main call is listed here with
@@ -50,6 +54,20 @@ const pageSchema = z.object({
 // DTOs
 // ---------------------------------------------------------------------------
 
+/** "My profile" in the header menu: the signed-in user's own account. */
+export interface ProfileDto {
+  userId: string
+  username: string
+  displayName: string
+  email: string | null
+  phone: string | null
+  roleName: string
+  branchName: string
+  hasPin: boolean
+  lastLoginAt: number | null
+  createdAt: number
+}
+
 export interface SessionUser {
   userId: string
   username: string
@@ -65,6 +83,14 @@ export interface SessionUser {
 }
 
 export interface SystemInfo {
+  /** Standalone / Host / Client (D33) */
+  deviceRole: 'standalone' | 'host' | 'client'
+  deviceName: string
+  /** Client: the Host it works through and whether it is reachable now */
+  hostName: string | null
+  hostConnected: boolean | null
+  /** Client: offline bills still waiting for the Host (D36) */
+  offlinePending: number | null
   appVersion: string
   electron: string
   node: string
@@ -72,6 +98,10 @@ export interface SystemInfo {
   sqlite: string
   schemaVersion: number
   platform: string
+  /** settings: sales.delivery_enabled (menus and POS hide delivery when off) */
+  deliveryEnabled: boolean
+  /** what the license grants (D51) — menus and pages hide what is off */
+  features: LicenseFeatures
 }
 
 export interface SetupStatus {
@@ -130,9 +160,13 @@ export interface RoleSummary extends RoleOption {
   maxDiscountBp: number
 }
 
-export type AuditVerifyResult =
+export type AuditVerifyResult = (
   | { ok: true; count: number }
   | { ok: false; count: number; brokenAtSeq?: number; reason: string }
+) & {
+  /** the newest verified backup's recorded audit head still matches the live log (null = no backup yet) */
+  anchor?: { ok: boolean; seq: number; at: number } | null
+}
 
 // ---------------------------------------------------------------------------
 // Endpoints
@@ -167,6 +201,19 @@ export const api = {
     'authenticated',
     z.object({ currentPassword: z.string().min(1).max(128), newPassword: passwordSchema }),
   ),
+
+  // ---- own account (header menu) — any signed-in user, for themselves only
+  'profile.get': ep<ProfileDto>()('authenticated', z.undefined()),
+  'profile.update': ep<ProfileDto>()(
+    'authenticated',
+    z.object({
+      displayName: displayNameSchema,
+      email: z.string().trim().max(120).transform((v) => v || null).pipe(z.string().email().nullable()),
+      phone: z.string().trim().max(20).transform((v) => v || null).pipe(z.string().regex(/^0\d{8,9}$/).nullable()),
+    }),
+  ),
+  /** Own PIN (POS quick switch / approvals). The account password proves it is really them. */
+  'profile.changePin': ep<ProfileDto>()('authenticated', z.object({ currentPassword: z.string().min(1).max(128), newPin: pinSchema })),
 
   'users.list': ep<UserList>()(
     'users:view',
@@ -222,6 +269,11 @@ export const api = {
 
   ...salesApi,
   ...stockApi,
+  ...systemApi,
+  ...licenseApi,
+  ...aboutApi,
+  ...opsApi,
+  ...lanApi,
   ...expensesApi,
   ...promoApi,
   ...reportsApi,
@@ -246,6 +298,12 @@ export type AppEvent =
   | { type: 'bill.changed'; billId: string }
   | { type: 'shift.changed' }
   | { type: 'cfd.state'; payload: CfdState }
+  /** Client: connection to the Host changed (D33) */
+  | { type: 'lan.state'; connected: boolean; error: string | null }
+  /** Client: offline bills waiting for / refused by the Host (D36) */
+  | { type: 'sync.state'; pending: number; rejected: number }
+  /** auto-update progress (D42) */
+  | { type: 'update.state'; status: UpdateStatusDto }
 
 /** API surface exposed on window.kposs by the preload script. */
 export interface KpossBridge {

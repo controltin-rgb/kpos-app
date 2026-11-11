@@ -4,6 +4,7 @@ import { SalesRepo, type ShiftRow } from '@main/db/repos/sales.repo'
 import type { PaymentMethod, ShiftSummaryDto } from '@shared/api-sales'
 import { countedTotal, type DenominationCount } from '@shared/cash'
 import { AppError } from '@shared/errors'
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import { uuidv7 } from '@shared/id'
 import type { AuditService } from './audit.service'
 import type { DeviceService } from './device.service'
@@ -29,67 +30,81 @@ export class ShiftService {
     private readonly docs: DocNumberService,
     private readonly audit: AuditService,
     private readonly now: () => number = Date.now,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {
     this.repo = new SalesRepo(db)
   }
 
-  /** The open shift of this device, or null. */
-  current(): ShiftSummaryDto | null {
-    const s = this.repo.openShiftForDevice(this.devices.local.id)
-    return s ? this.summary(s) : null
+  /** false = the license has no cash drawer / shift close (D51): selling needs no manual shift, one is kept open automatically. */
+  drawerEnabled(): boolean {
+    return this.features().drawerShift
   }
 
-  /** Must be called inside a transaction; throws SHIFT_NOT_OPEN. */
-  requireOpen(): ShiftRow {
-    const s = this.repo.openShiftForDevice(this.devices.local.id)
-    if (!s) throw new AppError('SHIFT_NOT_OPEN')
-    return s
+  /** The open shift of this device, or null. */
+  current(actor?: Actor): ShiftSummaryDto | null {
+    const s = this.repo.openShiftForDevice(this.devices.currentId())
+    if (s) return this.summary(s)
+    // drawer feature off: the till is always "open" (the POS and offline Clients still see a shift)
+    if (actor && !this.drawerEnabled()) return this.summary(this.db.transaction(() => this.requireOpen(actor)).immediate())
+    return null
+  }
+
+  /** Must be called inside a transaction; throws SHIFT_NOT_OPEN (opens one by itself when the drawer feature is off). */
+  requireOpen(actor?: Actor): ShiftRow {
+    const s = this.repo.openShiftForDevice(this.devices.currentId())
+    if (s) return s
+    if (actor && !this.drawerEnabled()) return this.repo.shift(this.insertShift(actor, 0, 'auto'))!
+    throw new AppError('SHIFT_NOT_OPEN')
   }
 
   open(actor: Actor, openingFloatSatang: number): ShiftSummaryDto {
-    const at = this.now()
-    const id = this.db.transaction(() => {
-      const deviceId = this.devices.ensure(actor.branchId)
-      if (this.repo.openShiftForDevice(deviceId)) throw new AppError('SHIFT_ALREADY_OPEN')
-      const sid = uuidv7(at)
-      this.repo.insertShift({
-        id: sid,
-        branch_id: actor.branchId,
-        device_id: deviceId,
-        shift_no: this.docs.nextDocNo(actor.branchId, 'S', at),
-        opened_by: actor.userId,
-        opened_at: at,
-        opening_float_satang: openingFloatSatang,
-      })
-      if (openingFloatSatang > 0) {
-        this.repo.insertCash({
-          id: uuidv7(at),
-          branch_id: actor.branchId,
-          shift_id: sid,
-          kind: 'opening_float',
-          amount_satang: openingFloatSatang,
-          ref_type: 'shift',
-          ref_id: sid,
-          reverses_id: null,
-          note: null,
-          user_id: actor.userId,
-          device_id: deviceId,
-          created_at: at,
-        })
-      }
-      this.audit.append({
-        action: 'shift.open',
-        permission: 'shift:create',
-        userId: actor.userId,
-        branchId: actor.branchId,
-        deviceId,
-        entity: 'shifts',
-        entityId: sid,
-        after: { openingFloatSatang },
-      })
-      return sid
-    }).immediate()
+    const id = this.db.transaction(() => this.insertShift(actor, openingFloatSatang)).immediate()
     return this.summary(this.repo.shift(id)!)
+  }
+
+  /** Inserts an open shift for this device (call inside a transaction). */
+  private insertShift(actor: Actor, openingFloatSatang: number, auto?: 'auto'): string {
+    const at = this.now()
+    const deviceId = this.devices.ensure(actor.branchId)
+    if (this.repo.openShiftForDevice(deviceId)) throw new AppError('SHIFT_ALREADY_OPEN')
+    const sid = uuidv7(at)
+    this.repo.insertShift({
+      id: sid,
+      branch_id: actor.branchId,
+      device_id: deviceId,
+      shift_no: this.docs.nextDocNo(actor.branchId, 'S', at),
+      opened_by: actor.userId,
+      opened_at: at,
+      opening_float_satang: openingFloatSatang,
+    })
+    if (openingFloatSatang > 0) {
+      this.repo.insertCash({
+        id: uuidv7(at),
+        branch_id: actor.branchId,
+        shift_id: sid,
+        kind: 'opening_float',
+        amount_satang: openingFloatSatang,
+        ref_type: 'shift',
+        ref_id: sid,
+        reverses_id: null,
+        note: null,
+        user_id: actor.userId,
+        device_id: deviceId,
+        created_at: at,
+      })
+    }
+    this.audit.append({
+      action: 'shift.open',
+      permission: 'shift:create',
+      userId: actor.userId,
+      branchId: actor.branchId,
+      deviceId,
+      entity: 'shifts',
+      entityId: sid,
+      after: { openingFloatSatang },
+      ...(auto ? { reason: 'auto (cash drawer feature off)' } : {}),
+    })
+    return sid
   }
 
   /** Cash in / cash out of the drawer with a reason (audited). */

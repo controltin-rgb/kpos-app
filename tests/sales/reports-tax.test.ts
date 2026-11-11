@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createAppContext } from '@main/app-context'
 import { formatTaxId, isValidThaiTaxId } from '@shared/tax-id'
-import { createTestApp } from '../helpers/app'
+import { createTestApp, TEST_TRIAL_FEATURES } from '../helpers/app'
+import { installLicense } from '../helpers/license'
 import { T0 } from '../helpers/fixtures'
 import { requestId, seedShop } from '../helpers/shop'
 
@@ -67,6 +68,7 @@ describe('tax invoices (D19, D20) — formats must be reviewed by an accountant 
     expect((await t.call(1, 'orders.get', { id: a.bill.id })).events.map((e) => e.event)).toContain('tax_invoice')
 
     // next Buddhist year starts again at 000001
+    await installLicense(t) // a year later the trial would be over (D28)
     t.advance(365 * DAY)
     const b = await sell([{ sizeId: shop.sizes.s16, qty: 1 }])
     expect((await t.call(1, 'tax.issue', { type: 'full', billId: b.bill.id, customer: BUYER })).invoiceNo).toBe('A-TX-70-000001')
@@ -122,6 +124,40 @@ describe('reports', () => {
     await t.fails('FORBIDDEN', 2, 'reports.profit', { from: T0 - DAY, to: T0 + DAY })
   })
 
+  it('sales summary: one row per Bangkok day with totals, methods, voids and refunds', async () => {
+    const { t, shop, sell } = await ready()
+    const day0 = Date.UTC(2026, 10, 4, 17) // 2026-11-05 00:00 ICT
+    await sell([{ sizeId: shop.sizes.s22, qty: 2 }]) // 110 cash
+    const v = await sell([{ sizeId: shop.sizes.s16, qty: 1 }])
+    await t.call(1, 'orders.void', { id: v.bill.id, reason: 'ผิด' })
+    t.advance(DAY)
+    await t.call(1, 'pos.checkout', { requestId: requestId(), orderType: 'takeaway', items: [{ productId: shop.tea.id, sizeId: shop.sizes.s16, qty: 1, optionIds: [shop.normalSweet] }], payment: { method: 'transfer' } }) // 45
+    const r = await t.call(1, 'reports.salesSummary', { from: day0, to: day0 + 3 * DAY })
+    expect(r.days.map((d) => d.start)).toEqual([day0, day0 + DAY, day0 + 2 * DAY])
+    expect(r.days[0]).toMatchObject({ billCount: 1, totalSatang: 11_000, voidCount: 1, methods: { cash: 11_000 } })
+    expect(r.days[1]).toMatchObject({ billCount: 1, totalSatang: 4_500, methods: { transfer: 4_500 } })
+    expect(r.days[2]).toMatchObject({ billCount: 0, totalSatang: 0 })
+    expect(r.total).toMatchObject({ billCount: 2, totalSatang: 15_500, voidCount: 1, netSatang: 15_500 - r.total.vatSatang })
+    expect(r.methodKeys).toEqual(['cash', 'transfer'])
+    await t.fails('INVALID_INPUT', 1, 'reports.salesSummary', { from: day0, to: day0 + 401 * DAY })
+  })
+
+  it('expense report: categories with counts, days and sales for comparison', async () => {
+    const { t, shop, sell } = await ready()
+    const day0 = Date.UTC(2026, 10, 4, 17)
+    const cats = await t.call(1, 'expenses.categories')
+    const cat = (name: string) => cats.find((c) => c.name === name)!.id
+    await sell([{ sizeId: shop.sizes.s22, qty: 2 }]) // 110
+    await t.call(1, 'expenses.create', { categoryId: cat('วัตถุดิบ'), amountSatang: 10_700, vatSatang: 700, hasTaxInvoice: true, source: 'bank', description: 'นม' })
+    await t.call(1, 'expenses.create', { categoryId: cat('วัตถุดิบ'), amountSatang: 5_000, source: 'petty_cash', description: 'ไข่มุก', spentAt: day0 + DAY + 3_600_000 })
+    const gone = await t.call(1, 'expenses.create', { categoryId: cat('อื่นๆ'), amountSatang: 2_000, source: 'bank', description: 'ผิด' })
+    await t.call(1, 'expenses.void', { id: gone.id, reason: 'คีย์ผิด' })
+    const r = await t.call(1, 'reports.expenses', { from: day0, to: day0 + 2 * DAY })
+    expect(r).toMatchObject({ totalSatang: 15_700, count: 2, inputVatSatang: 700, salesSatang: 11_000, bySource: { bank: 10_700, petty_cash: 5_000, drawer: 0 } })
+    expect(r.categories).toEqual([{ categoryId: cat('วัตถุดิบ'), name: 'วัตถุดิบ', totalSatang: 15_700, count: 2 }])
+    expect(r.days).toEqual([{ start: day0, totalSatang: 10_700, count: 1 }, { start: day0 + DAY, totalSatang: 5_000, count: 1 }])
+  })
+
   it('lists closed shifts for the Z-Report', async () => {
     const { t } = await ready()
     const s = (await t.call(1, 'shift.current'))!
@@ -136,7 +172,7 @@ describe('export', () => {
   it('writes UTF-8 CSV with a BOM through the save dialog', async () => {
     const t = createTestApp()
     const saved: { name: string; content: string }[] = []
-    const app = createAppContext({ db: t.db, authSecret: 'x'.repeat(48), now: () => T0, saveFile: async (name, content) => (saved.push({ name, content: String(content) }), `/tmp/${name}`) })
+    const app = createAppContext({ db: t.db, authSecret: 'x'.repeat(48), now: () => T0, trialFeatures: TEST_TRIAL_FEATURES, saveFile: async (name, content) => (saved.push({ name, content: String(content) }), `/tmp/${name}`) })
     await t.setup()
     const shop = await seedShop(t)
     await t.call(1, 'shift.open', { openingFloatSatang: 0 })
@@ -148,5 +184,11 @@ describe('export', () => {
     expect(saved[0]!.name).toMatch(/\.csv$/)
     expect(saved[0]!.content.startsWith('﻿')).toBe(true)
     expect(saved[0]!.content).toContain('A-000001')
+
+    await app.dispatch(7, 'reports.export', { report: 'sales_summary', from: T0 - DAY, to: T0 + DAY })
+    expect(saved[1]!.content).toContain('เงินสด')
+    expect(saved[1]!.content.trim().split('\r\n').at(-1)).toMatch(/^รวม,1,/)
+    expect(await app.dispatch(7, 'reports.export', { report: 'expiry', from: 0, to: T0 + 7 * DAY })).toMatchObject({ ok: true })
+    expect(saved[2]!.content).toContain('หมดอายุ')
   })
 })

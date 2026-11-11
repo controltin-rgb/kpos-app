@@ -1,17 +1,21 @@
 {
   "name": "kposs",
   "productName": "KPOSS",
-  "version": "0.1.0",
+  "desktopName": "kposs.desktop",
+  "version": "0.3.1",
   "description": "KPOSS — Korn POS Management System",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
   "author": "Korn",
   "license": "UNLICENSED",
+  "packageManager": "pnpm@10.32.1",
   "dependencies": {
     "better-auth": "^1.7.17",
     "better-sqlite3": "^13.0.3",
+    "electron-updater": "^6.8.11",
     "kysely": "^0.29.8",
+    "selfsigned": "^5.5.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -47,16 +51,33 @@
     "vite": "^8.3.6",
     "vitest": "^5.1.0"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "electron-winstaller",
+      "esbuild"
+    ]
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "build": "npm run typecheck && electron-vite build && electron-builder --dir",
-    "build:dist": "npm run typecheck && electron-vite build && electron-builder",
+    "build": "pnpm run typecheck && electron-vite build && electron-builder --dir",
+    "build:dist": "pnpm run typecheck && electron-vite build && electron-builder --publish never",
+    "build:win": "pnpm run typecheck && electron-vite build && electron-builder --win --publish never",
+    "build:mac": "pnpm run typecheck && electron-vite build && electron-builder --mac --publish never",
+    "build:linux": "pnpm run typecheck && electron-vite build && electron-builder --linux --publish never",
     "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/vitest/vitest.mjs run",
     "test:watch": "cross-env ELECTRON_RUN_AS_NODE=1 electron node_modules/vitest/vitest.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-    "postinstall": "electron-builder install-app-deps",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "license:keygen": "tsx scripts/license-keygen.ts",
+    "license:issue": "tsx scripts/license-issue.ts",
+    "license:trial": "tsx scripts/license-trial.ts",
+    "license:tool": "tsx scripts/license-tool.ts",
+    "theme:dark": "node scripts/gen-dark-css.mjs",
+    "icon": "electron scripts/render-icon.cjs",
+    "smoke": "node scripts/smoke-packaged.mjs"
   }
 }

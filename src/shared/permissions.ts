@@ -24,6 +24,7 @@ export const RESOURCES = {
   audit: ['view'],
   backup: ['view', 'create'], // create = run a backup
   settings: ['view', 'update'],
+  manual: ['view', 'update'], // user manual (System menu); update = edit pages
 } as const satisfies Record<string, readonly CrudAction[]>
 
 export type Resource = keyof typeof RESOURCES
@@ -43,6 +44,7 @@ export const SPECIAL_PERMISSIONS = [
   'inventory:approve_count',
   'backup:restore', // Implement.md §6.10: highest privilege
   'license:manage', // Super Admin only (D6)
+  'system:update', // edit the About page (version notes, roadmap, vendor contact)
 ] as const
 
 type CrudPermission = { [R in Resource]: `${R}:${(typeof RESOURCES)[R][number]}` }[Resource]
@@ -116,6 +118,8 @@ export const SYSTEM_ROLES: readonly SystemRoleDef[] = [
         'roles:delete',
         'backup:create',
         'settings:update',
+        'system:update',
+        'manual:update',
       ),
     ]),
     maxDiscountBp: 10_000,
@@ -133,6 +137,7 @@ export const SYSTEM_ROLES: readonly SystemRoleDef[] = [
       ...crud('inventory', ['view', 'create', 'update']),
       'promo:view',
       'reports:view',
+      'manual:view',
     ]),
     maxDiscountBp: 0,
   },
@@ -149,6 +154,7 @@ export const SYSTEM_ROLES: readonly SystemRoleDef[] = [
       'shift:open_drawer',
       'promo:view',
       'expenses:create',
+      'manual:view',
     ]),
     maxDiscountBp: 0,
   },

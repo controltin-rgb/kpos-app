@@ -5,6 +5,7 @@ import { GradientButton, inputClass, OutlineButton, Toggle, useToast } from '@re
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { money } from '@renderer/lib/format'
+import { useFeatures } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 
 const p = t.pos
@@ -98,6 +99,7 @@ export function DiscountDialog({
   onChange: (s: DiscountState) => void
   onClose: () => void
 }) {
+  const { promotions: promotionsOn } = useFeatures()
   const [code, setCode] = useState(state.couponCode ?? '')
   const [manualOn, setManualOn] = useState(!!state.manual)
   const [kind, setKind] = useState<'percent' | 'amount'>(state.manual?.kind ?? 'percent')
@@ -114,7 +116,7 @@ export function DiscountDialog({
   function apply() {
     onChange({
       ...state,
-      couponCode: code.trim() || null,
+      couponCode: promotionsOn ? code.trim() || null : null,
       manual: manualOn && manualValue > 0 ? { kind, value: manualValue, reason: reason.trim(), ...(approver.username && approver.pin ? { approver } : {}) } : null,
     })
     onClose()
@@ -122,6 +124,8 @@ export function DiscountDialog({
 
   return (
     <Modal title={p.discountTitle} onClose={onClose} width={520}>
+      {promotionsOn && (
+        <>
       <section className="flex flex-col gap-2">
         <span className="text-sm font-bold">{p.autoPromos}</span>
         {(quote?.promotions ?? []).length === 0 && <span className="text-sm text-muted-foreground">{p.noPromos}</span>}
@@ -152,6 +156,8 @@ export function DiscountDialog({
         </div>
         {quote?.couponError && <span className="text-[13px] font-semibold text-danger-foreground">{p.couponErrors[quote.couponError]}</span>}
       </section>
+        </>
+      )}
 
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">

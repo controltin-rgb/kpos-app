@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import QRCode from 'qrcode'
 import type { ExpiringLotDto } from '@shared/api-stock'
 import type { CategoryDto, ModifierGroupDto, ProductDto } from '@shared/api-sales'
+import type { CouponDto, PromotionDto } from '@shared/api-promo'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { useToast } from '@renderer/components/ui'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
@@ -13,7 +15,7 @@ import { formatDateTimeShort } from '@renderer/lib/format'
  * sample fields (cup size, sweetness, topping) map to sizes, modifier options and modifier groups.
  */
 const L = t.label
-type Kind = 'cup' | 'exp' | 'shelf'
+type Kind = 'cup' | 'exp' | 'shelf' | 'coupon'
 type Sort = keyof typeof L.sorts
 type Flag = keyof typeof L.toggles
 
@@ -25,6 +27,8 @@ const SIZES = [
 ]
 const PALETTE = ['#F7791E', '#1BA56B', '#E23B76', '#6A47DB', '#14A094', '#E5A10C']
 const RAW_COLOR = '#4C8DF6'
+const COUPON_COLOR = '#E23B76'
+const CL = t.couponLabel
 const PS = 6
 const K = 560 / 210 // preview px per mm
 const PT_MM = 0.3528
@@ -37,6 +41,8 @@ interface Item {
   catName: string
   color: string
   priceSatang: number | null
+  /** big text instead of a price (coupon: the discount) */
+  priceText?: string
   active: boolean
   mods: string
   date: string
@@ -47,6 +53,14 @@ interface Item {
 
 const baht = (s: number) => `฿${s % 100 ? (s / 100).toFixed(2) : String(s / 100)}`
 const dmy = (ms: number) => formatDateTimeShort(ms).slice(0, 8)
+
+/** "ลด 10%" / "ลด ฿20" / "ซื้อ 2 แถม 1" from the coupon's promotion */
+function discountText(p: PromotionDto | undefined): string {
+  if (!p) return ''
+  if (p.type === 'percent') return CL.off(`${p.value % 100 ? (p.value / 100).toFixed(2) : p.value / 100}%`)
+  if (p.type === 'amount') return CL.off(baht(p.value))
+  return t.promo.types.buy_x_get_y.replace('X', String(p.rules.buyQty ?? 1)).replace('Y', String(p.rules.getQty ?? 1))
+}
 
 /** Real QR (KPOSS:P:<productId> / KPOSS:L:<lotId>) rendered as an SVG path. */
 function qrSvg(text: string): string {
@@ -100,6 +114,12 @@ const DEFAULT_FILTERS = { q: '', cat: 'all', status: 'all' as 'all' | 'active' |
 
 export function LabelPage() {
   const toast = useToast()
+  const { can } = useSession()
+  const features = useFeatures()
+  const canCoupons = can('promo:view') && features.promotions
+  const canExpiry = features.inventory // expiry labels read stock lots
+  const [coupons, setCoupons] = useState<CouponDto[]>([])
+  const [promos, setPromos] = useState<PromotionDto[]>([])
   const [products, setProducts] = useState<ProductDto[]>([])
   const [cats, setCats] = useState<CategoryDto[]>([])
   const [groups, setGroups] = useState<ModifierGroupDto[]>([])
@@ -113,8 +133,12 @@ export function LabelPage() {
     void call('catalog.products').then(setProducts, fail)
     void call('catalog.categories').then(setCats, fail)
     void call('catalog.groups').then(setGroups, fail)
-    void call('waste.expiring', { withinDays: 60 }).then(setLots, fail)
-  }, [toast])
+    if (canExpiry) void call('waste.expiring', { withinDays: 60 }).then(setLots, fail)
+    if (canCoupons) {
+      void call('coupons.list').then(setCoupons, fail)
+      void call('promo.list').then(setPromos, fail)
+    }
+  }, [toast, canCoupons, canExpiry])
 
   const options = useMemo(() => groups.flatMap((g) => g.options.map((o) => ({ id: o.id, name: o.name, groupId: g.id, group: g.name }))), [groups])
   const sizeNames = useMemo(() => [...new Set(products.flatMap((p) => p.sizes.map((z) => z.label)))], [products])
@@ -137,6 +161,29 @@ export function LabelPage() {
         sizes: [],
         optionIds: [],
       }))
+    if (s.kind === 'coupon')
+      // the QR holds the coupon code itself: a scanner at the POS types it into the coupon field
+      return coupons.map((c) => {
+        const promo = promos.find((p) => p.id === c.promotionId)
+        const left = c.maxUses === null ? null : Math.max(0, c.maxUses - c.usedCount)
+        const usable = (promo?.active ?? true) && (c.expiresAt === null || c.expiresAt > now) && left !== 0
+        return {
+          key: `C:${c.id}`,
+          qr: c.code,
+          name: c.promotionName,
+          cat: 'coupon',
+          catName: CL.tag,
+          color: COUPON_COLOR,
+          priceSatang: null,
+          priceText: discountText(promo),
+          active: usable,
+          mods: `${CL.code}: ${c.code}${left !== null ? ` · ${CL.uses(left)}` : ''}`,
+          date: c.expiresAt ? CL.until(dmy(c.expiresAt)) : CL.noExpiry,
+          hasExtras: false,
+          sizes: [],
+          optionIds: [],
+        }
+      })
     const opt = options.find((o) => o.id === s.option)
     return products.map((p) => {
       const ci = cats.findIndex((c) => c.id === p.categoryId)
@@ -159,7 +206,7 @@ export function LabelPage() {
         optionIds: p.modifierGroupIds.flatMap((g) => options.filter((o) => o.groupId === g).map((o) => o.id)),
       }
     })
-  }, [s.kind, s.cup, s.option, lots, products, cats, options, now])
+  }, [s.kind, s.cup, s.option, lots, products, cats, options, now, coupons, promos])
 
   const priceCap = useMemo(() => Math.max(2000, Math.ceil(Math.max(0, ...items.map((i) => i.priceSatang ?? 0)) / 500) * 500), [items])
   const maxPrice = s.maxPrice ?? priceCap
@@ -170,11 +217,11 @@ export function LabelPage() {
       if (s.cat !== 'all' && p.cat !== s.cat) return false
       if (s.status === 'active' && !p.active) return false
       if (s.status === 'off' && p.active) return false
-      if (s.cup !== 'all' && p.cat !== 'raw' && !p.sizes.includes(s.cup)) return false
-      if (s.option !== 'all' && p.cat !== 'raw' && !p.optionIds.includes(s.option)) return false
+      if (s.cup !== 'all' && p.cat !== 'raw' && p.cat !== 'coupon' && !p.sizes.includes(s.cup)) return false
+      if (s.option !== 'all' && p.cat !== 'raw' && p.cat !== 'coupon' && !p.optionIds.includes(s.option)) return false
       if (s.extras === 'yes' && !p.hasExtras) return false
       if (s.extras === 'no' && p.hasExtras) return false
-      if (q && !p.name.includes(q)) return false
+      if (q && !p.name.includes(q) && !(p.cat === 'coupon' && p.qr.toLowerCase().includes(q.toLowerCase()))) return false
       if (p.priceSatang !== null && p.priceSatang > maxPrice) return false
       return true
     })
@@ -205,15 +252,15 @@ export function LabelPage() {
   const cell = (p: Item, unit: number) => {
     const { ch, px, namePx, pad, textW } = layout(unit)
     const lines = Math.ceil((p.name.length * namePx * 0.62) / textW)
-    const price = p.priceSatang !== null ? baht(p.priceSatang) : ''
-    const pricePx = px(s.font * (isShelf ? 1.9 : 1.25))
+    const price = p.priceText ?? (p.priceSatang !== null ? baht(p.priceSatang) : '')
+    const pricePx = px(s.font * (isShelf || p.cat === 'coupon' ? 1.9 : 1.25))
     const modsPx = px(6.5)
     const datePx = px(5.5)
     const showPrice = flags.showPrice && !!price
     const showMods = flags.showMods && !!p.mods
     const need = 2 * pad.y + (9 / K) * unit + lines * namePx * 1.25 + (showMods ? modsPx * 1.5 : 0) + (showPrice ? pricePx * 1.3 : 0) + (flags.showDate ? datePx * 1.4 : 0)
     return {
-      tag: s.kind === 'exp' ? L.tagRaw : isShelf ? L.tagShelf : p.catName,
+      tag: s.kind === 'exp' ? L.tagRaw : isShelf ? L.tagShelf : s.kind === 'coupon' ? CL.tag : p.catName,
       price,
       showPrice,
       showMods,
@@ -300,14 +347,17 @@ export function LabelPage() {
           <span className={sectionTitle}>{L.format}</span>
           <label className="flex flex-col gap-1.5 text-sm font-semibold">
             {L.kind}
-            <select className={inCls} value={s.kind} onChange={(e) => set({ page: 0, kind: e.target.value as Kind, cat: 'all' })}>
-              {(Object.keys(L.kinds) as Kind[]).map((k) => (
-                <option key={k} value={k}>
-                  {L.kinds[k]}
-                </option>
-              ))}
+            <select className={inCls} value={s.kind} onChange={(e) => set({ page: 0, kind: e.target.value as Kind, cat: 'all', ...(e.target.value === 'coupon' ? { size: SIZES.length - 1 } : {}) })}>
+              {(Object.keys(L.kinds) as Kind[])
+                .filter((k) => (k !== 'coupon' || canCoupons) && (k !== 'exp' || canExpiry))
+                .map((k) => (
+                  <option key={k} value={k}>
+                    {L.kinds[k]}
+                  </option>
+                ))}
             </select>
           </label>
+          {s.kind === 'coupon' && coupons.length === 0 && <span className="rounded-xl bg-warning px-3 py-2 text-[13px] text-warning-foreground">{CL.none}</span>}
           <label className="flex flex-col gap-1.5 text-sm font-semibold">
             {L.size}
             <select className={inCls} value={s.size} onChange={(e) => set({ size: Number(e.target.value) })}>
@@ -349,7 +399,7 @@ export function LabelPage() {
           <div className="flex flex-wrap gap-2.5">
             <label className={lbl}>
               {L.category}
-              <select className={inCls} value={s.cat} disabled={s.kind === 'exp'} onChange={(e) => set({ page: 0, cat: e.target.value })}>
+              <select className={inCls} value={s.cat} disabled={s.kind === 'exp' || s.kind === 'coupon'} onChange={(e) => set({ page: 0, cat: e.target.value })}>
                 <option value="all">{L.all}</option>
                 {cats.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -444,7 +494,7 @@ export function LabelPage() {
                   <div className="flex min-w-0 flex-1 flex-col">
                     <span className="text-[15px] font-semibold">{p.name}</span>
                     <span className="text-xs text-muted-foreground">
-                      {p.cat === 'raw' ? `${p.mods}${p.mods ? ' · ' : ''}${p.date}` : `${p.catName}${p.priceSatang !== null ? ` · ${baht(p.priceSatang)}` : ''}${p.active ? '' : L.inactiveSuffix}`}
+                      {p.cat === 'raw' || p.cat === 'coupon' ? `${p.mods}${p.mods ? ' · ' : ''}${p.date}${p.active ? '' : L.inactiveSuffix}` : `${p.catName}${p.priceSatang !== null ? ` · ${baht(p.priceSatang)}` : ''}${p.active ? '' : L.inactiveSuffix}`}
                     </span>
                   </div>
                   <Switch on={on} label={p.name} onClick={() => setS((x) => ({ ...x, off: { ...x.off, [p.key]: on } }))} />
@@ -493,7 +543,7 @@ export function LabelPage() {
           <span style={{ ...statusBase, background: status.bg, color: status.fg }}>{status.text}</span>
         </div>
         <div
-          className="box-border grid content-start bg-white p-[27px] shadow-[0_12px_34px_rgba(40,30,60,0.18)]"
+          className="keep-light box-border grid content-start bg-white p-[27px] shadow-[0_12px_34px_rgba(40,30,60,0.18)]"
           style={{ width: 560, height: 792, gridTemplateColumns: `repeat(${sz.cols}, ${pv.cw}px)`, gridAutoRows: `${pv.ch}px` }}
         >
           {cells.map(({ p, c }, i) => (

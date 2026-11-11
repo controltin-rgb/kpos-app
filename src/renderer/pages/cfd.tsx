@@ -19,7 +19,7 @@ export function CfdPage() {
 
   useEffect(() => {
     let alive = true
-    void call('cfd.state').then((s) => alive && setState(s))
+    void call('cfd.state').then((s) => alive && setState(s), () => undefined) // refused when the license has no CFD (D51)
     return () => {
       alive = false
     }

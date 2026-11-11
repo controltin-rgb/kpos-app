@@ -15,13 +15,15 @@ export class KdsService {
   tickets(actor: Actor, station: string): KdsTicketDto[] {
     const rows = this.db
       .prepare(
-        `SELECT t.bill_id, t.status, t.created_at, b.bill_no, b.order_type, b.channel,
+        `SELECT t.id AS ticket_id, t.item_done_at, t.bill_id, t.status, t.created_at, b.bill_no, b.order_type, b.channel,
                 i.id AS item_id, i.qty, i.product_name, i.size_label, i.note
          FROM kds_tickets t JOIN bills b ON b.id = t.bill_id JOIN bill_items i ON i.id = t.bill_item_id
          WHERE t.branch_id = ? AND t.station = ? AND t.status IN ('new', 'preparing', 'ready')
          ORDER BY t.created_at, i.line_no`,
       )
       .all(actor.branchId, station) as {
+      ticket_id: string
+      item_done_at: number | null
       bill_id: string
       status: 'new' | 'preparing' | 'ready'
       created_at: number
@@ -48,6 +50,8 @@ export class KdsService {
       // a bill's tickets move together; show the least advanced status
       if (r.status === 'new' || (r.status === 'preparing' && t.status === 'ready')) t.status = r.status
       t.items.push({
+        ticketId: r.ticket_id,
+        done: r.item_done_at !== null,
         qty: r.qty,
         name: r.product_name,
         sizeLabel: r.size_label,
@@ -70,9 +74,49 @@ export class KdsService {
       const current = rows.map((r) => r.status).sort((a, b) => order.indexOf(a) - order.indexOf(b))[0]!
       const next = NEXT[current]!
       const col = next === 'preparing' ? 'started_at' : next === 'ready' ? 'ready_at' : 'completed_at'
+      // bump (READY → served) also stamps bumped_at so the bill can be recalled
+      const bumped = next === 'completed' ? ', bumped_at = ?' : ''
       this.db
-        .prepare(`UPDATE kds_tickets SET status = ?, ${col} = ?, updated_at = ? WHERE branch_id = ? AND bill_id = ? AND station = ? AND status = ?`)
-        .run(next, at, at, actor.branchId, billId, station, current)
+        .prepare(`UPDATE kds_tickets SET status = ?, ${col} = ?${bumped}, updated_at = ? WHERE branch_id = ? AND bill_id = ? AND station = ? AND status = ?`)
+        .run(next, at, ...(bumped ? [at] : []), at, actor.branchId, billId, station, current)
+    }).immediate()
+  }
+
+  /** Ticks one drink of a bill being prepared (or clears the tick). */
+  toggleItem(actor: Actor, ticketId: string, station: string): void {
+    const at = this.now()
+    this.db.transaction(() => {
+      const row = this.db
+        .prepare(`SELECT item_done_at, status FROM kds_tickets WHERE id = ? AND branch_id = ? AND station = ?`)
+        .get(ticketId, actor.branchId, station) as { item_done_at: number | null; status: string } | undefined
+      if (!row) throw new AppError('NOT_FOUND')
+      if (row.status !== 'new' && row.status !== 'preparing') throw new AppError('NOT_EDITABLE')
+      // ticking a drink of a NEW bill means the bar has started on it
+      if (row.status === 'new')
+        this.db
+          .prepare(`UPDATE kds_tickets SET status = 'preparing', started_at = ?, updated_at = ? WHERE branch_id = ? AND station = ? AND status = 'new' AND bill_id = (SELECT bill_id FROM kds_tickets WHERE id = ?)`)
+          .run(at, at, actor.branchId, station, ticketId)
+      this.db.prepare(`UPDATE kds_tickets SET item_done_at = ?, updated_at = ? WHERE id = ?`).run(row.item_done_at === null ? at : null, at, ticketId)
+    }).immediate()
+  }
+
+  /** Brings the most recently bumped bill at this station back to READY (bumped by mistake). Null when there is none. */
+  recall(actor: Actor, station: string): string | null {
+    const at = this.now()
+    return this.db.transaction(() => {
+      const last = this.db
+        .prepare(
+          `SELECT t.bill_id FROM kds_tickets t JOIN bills b ON b.id = t.bill_id
+           WHERE t.branch_id = ? AND t.station = ? AND t.status = 'completed' AND t.bumped_at IS NOT NULL AND b.status = 'paid'
+           ORDER BY t.bumped_at DESC, t.rowid DESC LIMIT 1`,
+        )
+        .pluck()
+        .get(actor.branchId, station) as string | undefined
+      if (!last) return null
+      this.db
+        .prepare(`UPDATE kds_tickets SET status = 'ready', completed_at = NULL, bumped_at = NULL, updated_at = ? WHERE branch_id = ? AND station = ? AND bill_id = ? AND status = 'completed' AND bumped_at IS NOT NULL`)
+        .run(at, actor.branchId, station, last)
+      return last
     }).immediate()
   }
 }

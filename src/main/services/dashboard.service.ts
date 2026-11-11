@@ -3,6 +3,7 @@ import type { Db } from '@main/db/connection'
 import { thMain } from '@main/i18n/th'
 import type { DashboardDto, DashboardPeriod, NotificationDto } from '@shared/api-dashboard'
 import { uuidv7 } from '@shared/id'
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import type { ReportService } from './report.service'
 import type { ShiftService } from './shift.service'
 import type { StockService } from './stock/stock.service'
@@ -38,6 +39,8 @@ export class DashboardService {
     private readonly shifts: ShiftService,
     private readonly stock: StockService,
     private readonly now: () => number = Date.now,
+    private readonly licenseDaysLeft: () => number | null = () => null,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {}
 
   summary(actor: Actor, period: DashboardPeriod): DashboardDto {
@@ -73,21 +76,23 @@ export class DashboardService {
     }
 
     const chBills = (c: string) => cur.channels.find((x) => x.channel === c)?.billCount ?? 0
-    const ings = this.stock.repo.ingredientsWithStock(actor.branchId)
+    const f = this.features()
+    // inventory / drawer features off (D51): those cards are empty (the page hides them)
+    const ings = f.inventory ? this.stock.repo.ingredientsWithStock(actor.branchId) : []
     const low = ings
       .filter((i) => i.on_hand_milli - i.shortage_milli <= i.min_qty_milli)
       .map((i) => ({ name: i.name, pct: Math.max(0, Math.min(100, Math.round(((i.on_hand_milli - i.shortage_milli) * 100) / Math.max(1, i.pack_size_milli)))) }))
       .sort((a, b) => a.pct - b.pct)
-    const lots = this.db
+    const lots = (!f.inventory ? [] : this.db
       .prepare(
         `SELECT i.name, l.lot_no, l.expires_at FROM stock_lots l JOIN ingredients i ON i.id = l.ingredient_id
          WHERE l.branch_id = ? AND l.qty_remaining_milli > 0 AND l.expires_at IS NOT NULL AND l.expires_at <= ? ORDER BY l.expires_at`,
       )
-      .all(actor.branchId, now + 7 * DAY) as { name: string; lot_no: string | null; expires_at: number }[]
+      .all(actor.branchId, now + 7 * DAY)) as { name: string; lot_no: string | null; expires_at: number }[]
     const daysLeft = (t: number) => Math.max(0, Math.ceil((t - now) / DAY))
     const open = this.db.prepare(`SELECT * FROM shifts WHERE branch_id = ? AND status = 'open' ORDER BY opened_at DESC LIMIT 1`).get(actor.branchId) as Parameters<ShiftService['summary']>[0] | undefined
     const lastClosed = this.db.prepare(`SELECT over_short_satang FROM shifts WHERE branch_id = ? AND status = 'closed' ORDER BY closed_at DESC LIMIT 1`).pluck().get(actor.branchId) as number | undefined
-    const openSummary = open ? this.shifts.summary(open) : null
+    const openSummary = open && f.drawerShift ? this.shifts.summary(open) : null
 
     return {
       period,
@@ -97,7 +102,7 @@ export class DashboardService {
       voids: cur.voidCount,
       avgBillSatang: cur.avgBillSatang,
       itemsPerBillX10: cur.billCount ? Math.round((totalItems * 10) / cur.billCount) : 0,
-      grossProfitSatang: can(actor, 'reports:view_cost') ? this.reports.profitReport(actor, r.from, r.to).grossProfitSatang : null,
+      grossProfitSatang: f.inventory && can(actor, 'reports:view_cost') ? this.reports.profitReport(actor, r.from, r.to).grossProfitSatang : null,
       chart,
       channels: (['dine_in', 'takeaway', 'grab', 'lineman', 'shopeefood', 'foodpanda'] as const).map((c) => ({ channel: c, bills: chBills(c) })),
       deliveries: { grab: chBills('grab'), lineman: chBills('lineman'), shopeefood: chBills('shopeefood'), foodpanda: chBills('foodpanda') },
@@ -111,9 +116,9 @@ export class DashboardService {
       },
       shift: openSummary ? { openedByName: openSummary.openedByName, expectedCashSatang: openSummary.expectedCashSatang, openingFloatSatang: openSummary.openingFloatSatang, lastOverShortSatang: lastClosed ?? null } : null,
       pending: {
-        counts: this.db.prepare(`SELECT count(*) FROM stock_counts WHERE branch_id = ? AND status = 'pending'`).pluck().get(actor.branchId) as number,
+        counts: f.inventory ? (this.db.prepare(`SELECT count(*) FROM stock_counts WHERE branch_id = ? AND status = 'pending'`).pluck().get(actor.branchId) as number) : 0,
         voids: 0,
-        licenseDaysLeft: null,
+        licenseDaysLeft: this.licenseDaysLeft(),
         lastBackupAt: (this.db.prepare('SELECT max(finished_at) FROM backup_runs WHERE ok = 1').pluck().get() as number | null) ?? null,
       },
     }
@@ -127,6 +132,7 @@ export class DashboardService {
     const now = this.now()
     const t = thMain.notifications
     const want: { kind: NotificationDto['kind']; refId: string; title: string; body: string; permission: string }[] = []
+    if (!this.features().inventory) return
     for (const i of this.stock.repo.ingredientsWithStock(actor.branchId)) {
       const avail = i.on_hand_milli - i.shortage_milli
       if (avail <= i.min_qty_milli) {
@@ -156,7 +162,7 @@ export class DashboardService {
   notifications(actor: Actor): { items: NotificationDto[]; unread: number } {
     this.sync(actor)
     const rows = (
-      this.db.prepare('SELECT * FROM notifications WHERE branch_id = ? ORDER BY created_at DESC LIMIT 50').all(actor.branchId) as {
+      this.db.prepare(`SELECT * FROM notifications WHERE branch_id = ? ${this.features().inventory ? '' : "AND kind NOT IN ('low_stock', 'near_expiry', 'pending_count')"} ORDER BY created_at DESC LIMIT 50`).all(actor.branchId) as {
         id: string
         kind: NotificationDto['kind']
         title: string

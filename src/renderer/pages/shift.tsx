@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { ShiftSummaryDto } from '@shared/api-sales'
 import { GRADIENTS, GradientButton, IconTile, inputClass, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useAppEvent } from '@renderer/lib/events'
@@ -31,6 +32,7 @@ const line = 'flex justify-between text-sm'
 export function ShiftPage() {
   const { user, can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const navigate = useNavigate()
   const [shift, setShift] = useState<ShiftSummaryDto | null | undefined>(undefined)
   const [counts, setCounts] = useState<Record<number, number>>({})
@@ -60,7 +62,7 @@ export function ShiftPage() {
   const diffText = (diff > 0 ? '+ ' : diff < 0 ? '− ' : '') + money(Math.abs(diff))
 
   async function close() {
-    if (!shift || !window.confirm(s.closeConfirm(diffText))) return
+    if (!shift || !(await confirm({ kind: 'warning', icon: 'clock', title: t.confirmDialog.closeShiftTitle, message: s.closeConfirm(diffText), confirmLabel: t.confirmDialog.closeShift }))) return
     setBusy(true)
     try {
       const res = await call('shift.close', {

@@ -7,7 +7,7 @@ import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useAppEvent } from '@renderer/lib/events'
 import { money } from '@renderer/lib/format'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 
 const d = t.dash
 const PERIODS: DashboardPeriod[] = ['today', 'yesterday', 'week', 'month']
@@ -56,7 +56,8 @@ function Summary({ icon, tone, circle, title, children }: { icon: IconName; tone
 
 /** docs/design/Dashboard.dc.html (confirmed design) with live data. */
 export function DashboardPage() {
-  const { user } = useSession()
+  const { user, system } = useSession()
+  const features = useFeatures()
   const navigate = useNavigate()
   const [period, setPeriod] = useState<DashboardPeriod>('today')
   const [data, setData] = useState<DashboardDto | null>(null)
@@ -155,6 +156,7 @@ export function DashboardPage() {
         />
         <Kpi icon="receipt" tone="green" circle="#DDF5E8" label={d.bills} value={d.billsValue(n0(data.bills))} sub={d.voids(data.voids)} subColor="#5C6270" />
         <Kpi icon="trend" tone="orange" circle="#FFE9D2" label={d.avg} value={money(data.avgBillSatang).replace(/\.\d\d$/, '')} sub={d.perBill((data.itemsPerBillX10 / 10).toFixed(1))} subColor="#5C6270" />
+        {features.inventory && (
         <Kpi
           icon="tag"
           tone="pink"
@@ -164,9 +166,11 @@ export function DashboardPage() {
           sub={pctOfSales === null ? (data.grossProfitSatang === null ? d.gpHidden : '—') : d.gpPct(pctOfSales)}
           subColor="#5C6270"
         />
+        )}
       </div>
 
       <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-4">
+        {features.inventory && (
         <Summary icon="warning" tone="red" circle="#FDE3E5" title={d.stockAlert}>
           <div className="relative text-[32px] leading-[1.1] font-bold">
             {stockCount} <span className="text-[15px] font-medium text-muted-foreground">{d.items}</span>
@@ -177,18 +181,23 @@ export function DashboardPage() {
             <span className="rounded-xl bg-[#FFEBCC] px-2.5 py-[3px] text-[#7A4A00]">{d.exp7(data.stock.exp7Count)}</span>
           </div>
         </Summary>
+        )}
+        {system?.deliveryEnabled !== false && (
         <Summary icon="truck" tone="blue" circle="#E4EEFF" title={d.delivery}>
           <div className="relative text-[32px] leading-[1.1] font-bold">
             <span>{deliveries}</span> <span className="text-[15px] font-medium text-muted-foreground">{d.orders}</span>
           </div>
           <div className="relative text-[13px] text-muted-foreground">{d.deliverySub(data.deliveries.grab, data.deliveries.lineman, data.deliveries.shopeefood, data.deliveries.foodpanda)}</div>
         </Summary>
+        )}
+        {features.drawerShift && (
         <Summary icon="clock" tone="teal" circle="#D9F4F1" title={d.shift}>
           <div className="relative text-[32px] leading-[1.1] font-bold">{data.shift ? money(data.shift.expectedCashSatang).replace(/\.\d\d$/, '') : '—'}</div>
           <div className="relative text-[13px] text-muted-foreground">
             {data.shift ? d.shiftSub(data.shift.openedByName, money(data.shift.openingFloatSatang), money(data.shift.lastOverShortSatang ?? 0)) : d.noShift}
           </div>
         </Summary>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-4">
@@ -272,6 +281,7 @@ export function DashboardPage() {
             </div>
           ))}
         </section>
+        {features.inventory && (
         <section className={`${section} flex-[1_1_320px] gap-3.5`}>
           <h2 className="m-0 text-base font-semibold">{d.lowTitle}</h2>
           {data.stock.low.map((l) => {
@@ -304,14 +314,17 @@ export function DashboardPage() {
           )}
           {data.stock.low.length === 0 && data.stock.expiring.length === 0 && <span className="text-sm text-muted-foreground">{d.empty}</span>}
         </section>
+        )}
         <section className={`${section} flex-[1_1_320px] gap-3`}>
           <h2 className="m-0 text-base font-semibold">{d.pendingTitle}</h2>
+          {features.inventory && (
           <button type="button" onClick={() => navigate('/stock-count')} className="flex min-h-12 cursor-pointer items-center justify-between border-0 bg-transparent px-1 text-sm">
             <span>{d.approveStock}</span>
             <span className="rounded-xl px-3 py-0.5 font-bold" style={data.pending.counts ? { background: '#FFEBCC', color: '#7A4A00' } : { background: '#EFEBE6', color: '#1F2430' }}>
               {data.pending.counts} {d.items}
             </span>
           </button>
+          )}
           <div className="flex min-h-10 items-center justify-between text-sm">
             <span>{d.voidPending}</span>
             <span className="rounded-xl bg-[#EFEBE6] px-3 py-0.5 font-bold">{data.pending.voids}</span>

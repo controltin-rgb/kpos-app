@@ -12,6 +12,24 @@ const id = z.string().min(1).max(64)
 const satang = z.number().int().min(0).max(100_000_000_00)
 const phone = z.string().trim().regex(/^0\d{8,9}$/)
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+const optional = (s: z.ZodString) =>
+  z
+    .string()
+    .trim()
+    .transform((v) => v || null)
+    .pipe(s.nullable())
+    .nullable()
+    .default(null)
+
+/** Member details beyond phone/name (members page). '' → null. */
+export const memberProfile = z.object({
+  name: z.string().trim().max(80).nullable().default(null),
+  birthDate: optional(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/)),
+  email: optional(z.string().max(120).email()),
+  lineId: optional(z.string().max(60)),
+  phone2: optional(z.string().regex(/^0\d{8,9}$/)),
+  note: optional(z.string().max(500)),
+})
 
 export const approverSchema = z.object({ username: z.string().trim().min(1).max(64), pin: z.string().regex(/^\d{4,6}$/) })
 
@@ -85,6 +103,38 @@ export interface MemberDto {
   lifetimePoints: number
   consentAt: number | null
   createdAt: number
+  /** YYYY-MM-DD */
+  birthDate: string | null
+  email: string | null
+  lineId: string | null
+  /** second phone, masked like the first */
+  phone2Masked: string | null
+  note: string | null
+  /** paid bills (refunded/void excluded) */
+  visitCount: number
+  totalSpentSatang: number
+  lastVisitAt: number | null
+}
+
+export interface MemberBillDto {
+  id: string
+  billNo: string
+  paidAt: number
+  totalSatang: number
+  status: 'paid' | 'void' | 'refunded'
+  pointsEarned: number
+  pointsRedeemed: number
+}
+
+export interface MemberDetailDto {
+  member: MemberDto
+  bills: { items: MemberBillDto[]; total: number }
+}
+
+/** Full phone numbers: only for promo:update, and every reveal is audited (D46). */
+export interface MemberContactDto {
+  phone: string
+  phone2: string | null
 }
 
 export interface PointsRulesDto {
@@ -156,6 +206,10 @@ export const promoApi = {
     'promo:view',
     z.object({ page: z.number().int().min(1).default(1), pageSize: z.number().int().min(1).max(50).default(7), search: z.string().trim().max(20).optional(), tierId: id.optional() }),
   ),
+  'members.detail': ep<MemberDetailDto>()('promo:view', z.object({ id, page: z.number().int().min(1).default(1), pageSize: z.number().int().min(1).max(50).default(6) })),
+  'members.revealContact': ep<MemberContactDto>()('promo:update', z.object({ id })),
+  /** Members page: create (consent required) or edit a profile. Omitted phone on edit = unchanged. */
+  'members.save': ep<MemberDto>()('promo:update', memberProfile.extend({ id: id.optional(), phone: phone.optional(), consent: z.literal(true).optional() })),
   /** Cashiers register members at the POS; consent is mandatory (PDPA). */
   'members.register': ep<MemberDto>()('pos:create', z.object({ phone, name: z.string().trim().max(80).nullable().default(null), consent: z.literal(true) })),
   'members.adjustPoints': ep<MemberDto>()('promo:update', z.object({ id, delta: z.number().int().min(-1_000_000).max(1_000_000).refine((v) => v !== 0), reason: z.string().trim().min(3).max(200) })),

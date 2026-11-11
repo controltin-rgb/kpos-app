@@ -3,8 +3,9 @@ import type { AuthService } from '@main/auth/auth.service'
 import type { Db } from '@main/db/connection'
 import { UsersRepo } from '@main/db/repos/users.repo'
 import type { ParsedInput } from '@shared/api'
-import type { CouponDto, MemberDto, PointsRulesDto, PromotionDto, TierDto } from '@shared/api-promo'
+import type { CouponDto, MemberBillDto, MemberContactDto, MemberDetailDto, MemberDto, PointsRulesDto, PromotionDto, TierDto } from '@shared/api-promo'
 import { AppError } from '@shared/errors'
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import { uuidv7 } from '@shared/id'
 import { mulDivHalfUp, percentOfSatang } from '@shared/money'
 import { bestPromotions, type AppliedPromo, type PromoDef, type PromoLine, type PromoRules } from '@shared/promotions'
@@ -31,7 +32,23 @@ interface MemberRow {
   consent_at: number | null
   created_at: number
   deleted_at: number | null
+  birth_date: string | null
+  email: string | null
+  line_id: string | null
+  phone2: string | null
+  note: string | null
+  /** joined by memberSelect */
+  visit_count?: number
+  total_spent?: number
+  last_visit?: number | null
 }
+
+/** members + purchase stats from paid bills */
+const MEMBER_SELECT = `SELECT m.*,
+  (SELECT count(*) FROM bills b WHERE b.member_id = m.id AND b.status = 'paid') AS visit_count,
+  (SELECT coalesce(sum(b.total_satang), 0) FROM bills b WHERE b.member_id = m.id AND b.status = 'paid') AS total_spent,
+  (SELECT max(b.paid_at) FROM bills b WHERE b.member_id = m.id AND b.status = 'paid') AS last_visit
+FROM members m`
 
 export interface DiscountInput {
   memberId: string | null
@@ -68,15 +85,23 @@ export class PromoService {
     private readonly authService: AuthService,
     private readonly audit: AuditService,
     private readonly now: () => number = Date.now,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {
     this.users = new UsersRepo(db)
+  }
+
+  /** Members cap of the license (D51); 0 = unlimited. Existing members stay usable when the cap is lowered. */
+  private assertMemberCap(): void {
+    const cap = this.features().maxMembers
+    if (cap > 0 && (this.db.prepare('SELECT count(*) FROM members WHERE deleted_at IS NULL').pluck().get() as number) >= cap) throw new AppError('MEMBER_CAP_REACHED', { cap })
   }
 
   // ===========================================================================
   // promotions
   // ===========================================================================
 
-  private defs(branchId: string): (PromoDef & { usedCount: number })[] {
+  /** Promotion definitions of the branch (also copied to Clients for offline sales). */
+  defs(branchId: string): (PromoDef & { usedCount: number })[] {
     const rows = this.db
       .prepare(
         `SELECT p.*, (SELECT count(DISTINCT d.bill_id) FROM bill_discounts d JOIN bills b ON b.id = d.bill_id WHERE d.promotion_id = p.id AND b.status = 'paid') AS used
@@ -206,7 +231,7 @@ export class PromoService {
   }
 
   private member(id: string): MemberRow | undefined {
-    return this.db.prepare('SELECT * FROM members WHERE id = ? AND deleted_at IS NULL').get(id) as MemberRow | undefined
+    return this.db.prepare(`${MEMBER_SELECT} WHERE m.id = ? AND m.deleted_at IS NULL`).get(id) as MemberRow | undefined
   }
 
   memberDto(actor: Actor, m: MemberRow): MemberDto {
@@ -219,17 +244,25 @@ export class PromoService {
       lifetimePoints: m.lifetime_points,
       consentAt: m.consent_at,
       createdAt: m.created_at,
+      birthDate: m.birth_date,
+      email: m.email,
+      lineId: m.line_id,
+      phone2Masked: m.phone2 ? maskPhone(m.phone2) : null,
+      note: m.note,
+      visitCount: m.visit_count ?? 0,
+      totalSpentSatang: m.total_spent ?? 0,
+      lastVisitAt: m.last_visit ?? null,
     }
   }
 
   search(actor: Actor, phone: string): MemberDto[] {
-    return (this.db.prepare(`SELECT * FROM members WHERE deleted_at IS NULL AND phone LIKE ? ORDER BY phone LIMIT 7`).all(`${phone}%`) as MemberRow[]).map((m) => this.memberDto(actor, m))
+    return (this.db.prepare(`${MEMBER_SELECT} WHERE m.deleted_at IS NULL AND m.phone LIKE ? ORDER BY m.phone LIMIT 7`).all(`${phone}%`) as MemberRow[]).map((m) => this.memberDto(actor, m))
   }
 
   list(actor: Actor, q: ParsedInput<'members.list'>) {
     const tiers = this.tiers(actor)
     const rows = this.db
-      .prepare(`SELECT * FROM members WHERE deleted_at IS NULL ${q.search ? `AND (phone LIKE @q OR name LIKE @n)` : ''} ORDER BY lifetime_points DESC, created_at`)
+      .prepare(`${MEMBER_SELECT} WHERE m.deleted_at IS NULL ${q.search ? `AND (m.phone LIKE @q OR m.phone2 LIKE @q OR m.name LIKE @n OR m.line_id LIKE @n)` : ''} ORDER BY m.lifetime_points DESC, m.created_at`)
       .all({ q: `${q.search ?? ''}%`, n: `%${q.search ?? ''}%` }) as MemberRow[]
     const filtered = q.tierId ? rows.filter((m) => this.tierFor(actor, m.lifetime_points)?.id === q.tierId) : rows
     void tiers
@@ -240,6 +273,7 @@ export class PromoService {
     const at = this.now()
     const id = uuidv7(at)
     this.db.transaction(() => {
+      this.assertMemberCap()
       if (this.db.prepare('SELECT 1 FROM members WHERE phone = ? AND deleted_at IS NULL').get(input.phone)) throw new AppError('INVALID_INPUT', { fields: { phone: ['duplicate'] } })
       this.db
         .prepare('INSERT INTO members (id, branch_id, phone, name, consent_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -247,6 +281,65 @@ export class PromoService {
       this.audit.append({ action: 'members.register', permission: 'pos:create', userId: actor.userId, branchId: actor.branchId, entity: 'members', entityId: id, after: { phone: maskPhone(input.phone), consent: true } })
     }).immediate()
     return this.memberDto(actor, this.member(id)!)
+  }
+
+  /** Members page: create with consent, or edit the profile. Audited with masked contact data. */
+  save(actor: Actor, input: ParsedInput<'members.save'>): MemberDto {
+    const at = this.now()
+    const id = input.id ?? uuidv7(at)
+    const view = (m: { phone: string; name: string | null; birth_date: string | null; email: string | null; line_id: string | null; phone2: string | null; note: string | null }) => ({
+      phone: maskPhone(m.phone),
+      name: m.name,
+      birthDate: m.birth_date,
+      email: m.email,
+      lineId: m.line_id,
+      phone2: m.phone2 ? maskPhone(m.phone2) : null,
+      note: m.note,
+    })
+    this.db.transaction(() => {
+      const before = input.id ? this.member(input.id) : undefined
+      if (input.id && !before) throw new AppError('NOT_FOUND')
+      if (!before && (!input.phone || !input.consent)) throw new AppError('INVALID_INPUT', { fields: { [input.phone ? 'consent' : 'phone']: ['required'] } })
+      const phone = input.phone ?? before!.phone
+      if (this.db.prepare('SELECT 1 FROM members WHERE phone = ? AND deleted_at IS NULL AND id <> ?').get(phone, id)) throw new AppError('INVALID_INPUT', { fields: { phone: ['duplicate'] } })
+      const row = { phone, name: input.name, birth_date: input.birthDate, email: input.email, line_id: input.lineId, phone2: input.phone2, note: input.note }
+      if (before) {
+        this.db
+          .prepare('UPDATE members SET phone = @phone, name = @name, birth_date = @birth_date, email = @email, line_id = @line_id, phone2 = @phone2, note = @note, updated_at = @at, rev = rev + 1 WHERE id = @id')
+          .run({ ...row, at, id })
+        this.audit.append({ action: 'members.update', permission: 'promo:update', userId: actor.userId, branchId: actor.branchId, entity: 'members', entityId: id, before: view(before), after: view(row), risk: 'low' })
+      } else {
+        this.assertMemberCap()
+        this.db
+          .prepare(
+            'INSERT INTO members (id, branch_id, phone, name, birth_date, email, line_id, phone2, note, consent_at, created_at, updated_at) VALUES (@id, @branch, @phone, @name, @birth_date, @email, @line_id, @phone2, @note, @at, @at, @at)',
+          )
+          .run({ ...row, id, branch: actor.branchId, at })
+        this.audit.append({ action: 'members.register', permission: 'promo:update', userId: actor.userId, branchId: actor.branchId, entity: 'members', entityId: id, after: { ...view(row), consent: true } })
+      }
+    }).immediate()
+    return this.memberDto(actor, this.member(id)!)
+  }
+
+  /** Profile + purchase history (newest first). */
+  detail(actor: Actor, id: string, page: number, pageSize: number): MemberDetailDto {
+    const m = this.member(id)
+    if (!m) throw new AppError('NOT_FOUND')
+    const total = this.db.prepare('SELECT count(*) FROM bills WHERE member_id = ? AND paid_at IS NOT NULL').pluck().get(id) as number
+    const items = (
+      this.db
+        .prepare('SELECT id, bill_no, paid_at, total_satang, status, points_earned, points_redeemed FROM bills WHERE member_id = ? AND paid_at IS NOT NULL ORDER BY paid_at DESC, id DESC LIMIT ? OFFSET ?')
+        .all(id, pageSize, (page - 1) * pageSize) as { id: string; bill_no: string; paid_at: number; total_satang: number; status: MemberBillDto['status']; points_earned: number; points_redeemed: number }[]
+    ).map((b) => ({ id: b.id, billNo: b.bill_no, paidAt: b.paid_at, totalSatang: b.total_satang, status: b.status, pointsEarned: b.points_earned, pointsRedeemed: b.points_redeemed }))
+    return { member: this.memberDto(actor, m), bills: { items, total } }
+  }
+
+  /** Full phone numbers for staff who manage members; each reveal is in the audit log (PDPA). */
+  revealContact(actor: Actor, id: string): MemberContactDto {
+    const m = this.member(id)
+    if (!m) throw new AppError('NOT_FOUND')
+    this.audit.append({ action: 'members.reveal_contact', permission: 'promo:update', userId: actor.userId, branchId: actor.branchId, entity: 'members', entityId: id, after: { phone: maskPhone(m.phone) }, risk: 'medium' })
+    return { phone: m.phone, phone2: m.phone2 }
   }
 
   adjustPoints(actor: Actor, id: string, delta: number, reason: string): MemberDto {
@@ -267,7 +360,9 @@ export class PromoService {
     this.db.transaction(() => {
       const m = this.member(id)
       if (!m) throw new AppError('NOT_FOUND')
-      this.db.prepare(`UPDATE members SET phone = ?, name = NULL, deleted_at = ?, updated_at = ? WHERE id = ?`).run(`erased:${id}`, at, at, id)
+      this.db
+        .prepare(`UPDATE members SET phone = ?, name = NULL, birth_date = NULL, email = NULL, line_id = NULL, phone2 = NULL, note = NULL, deleted_at = ?, updated_at = ? WHERE id = ?`)
+        .run(`erased:${id}`, at, at, id)
       this.audit.append({ action: 'members.erase', permission: 'promo:delete', userId: actor.userId, branchId: actor.branchId, entity: 'members', entityId: id, reason, risk: 'high' })
     }).immediate()
   }
@@ -316,6 +411,8 @@ export class PromoService {
     let couponId: string | null = null
     let couponError: PricedDiscounts['couponError'] = null
     const couponPromos = new Set<string>()
+    const promotionsOn = this.features().promotions
+    if (d.couponCode && !promotionsOn) throw new AppError('FEATURE_NOT_LICENSED', { feature: 'promotions' })
     if (d.couponCode) {
       const c = this.findCoupon(actor.branchId, d.couponCode)
       if (!c) couponError = 'not_found'
@@ -326,7 +423,8 @@ export class PromoService {
         couponPromos.add(c.promotion_id)
       }
     }
-    const best = bestPromotions(this.defs(actor.branchId), lines, now, { coupons: couponPromos, excluded: new Set(d.excludedPromotionIds) })
+    // promotions off (D51): no automatic promotions; manual discount and points below still work
+    const best = promotionsOn ? bestPromotions(this.defs(actor.branchId), lines, now, { coupons: couponPromos, excluded: new Set(d.excludedPromotionIds) }) : { applied: [], totalSatang: 0 }
     const promotions = best.applied.map((a) => ({ ...a, couponId: couponPromos.has(a.promotionId) ? couponId : null }))
     let remaining = subtotal - best.totalSatang
 

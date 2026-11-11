@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import type { Actor } from '@main/auth/actor'
 import type { Db } from '@main/db/connection'
@@ -94,6 +94,7 @@ export class ExpenseService {
     this.db.transaction(() => {
       let shiftId: string | null = null
       if (input.source === 'drawer') {
+        if (!this.shifts.drawerEnabled()) throw new AppError('FEATURE_NOT_LICENSED', { feature: 'drawerShift' })
         const shift = this.shifts.requireOpen()
         if (this.shifts.expected(shift.id) < input.amountSatang) throw new AppError('PAYMENT_INVALID', { reason: 'drawer_insufficient' })
         shiftId = shift.id
@@ -218,6 +219,17 @@ export class ExpenseService {
     mkdirSync(this.receiptsDir, { recursive: true })
     const name = `${uuidv7()}${ext}`
     copyFileSync(sourcePath, join(this.receiptsDir, name))
+    return name
+  }
+
+  /** Same as storeReceipt for an image uploaded by a LAN Client (picked on that machine). */
+  storeReceiptBytes(ext: string, data: Buffer): string {
+    if (!this.receiptsDir) throw new AppError('INTERNAL')
+    const e = ext.toLowerCase()
+    if (!MIME[e] || e === '.pdf') throw new AppError('INVALID_INPUT', { fields: { receiptFile: ['type'] } })
+    mkdirSync(this.receiptsDir, { recursive: true })
+    const name = `${uuidv7()}${e}`
+    writeFileSync(join(this.receiptsDir, name), data)
     return name
   }
 

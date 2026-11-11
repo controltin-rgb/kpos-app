@@ -3,6 +3,7 @@ import type { Access, Endpoint } from './api'
 import { BILL_RESET_POLICIES, type BillResetPolicy } from './bill-number'
 import { type BillDiscountDto, discountInputs } from './api-promo'
 import { DENOMINATIONS_SATANG } from './cash'
+import { PAYMENT_PROVIDERS, PAYMENT_VERIFY_MODES, type PaymentProvider, type PaymentVerifyMode } from './payment-verify'
 
 /** Phase 2 IPC contract: catalog, inventory, POS, shifts, orders, KDS, settings. */
 
@@ -29,6 +30,8 @@ export interface CategoryDto {
   icon: string | null
   color: string | null
   kdsStation: string | null
+  /** SKU prefix for auto codes (COF → COF-0001); null → "P" */
+  skuPrefix: string | null
   sortOrder: number
   productCount: number
 }
@@ -137,6 +140,8 @@ export interface PosCatalog {
   }[]
   groups: { id: string; name: string; minSelect: number; maxSelect: number; options: { id: string; name: string; priceSatang: number; isDefault: boolean }[] }[]
   vatRateBp: number
+  /** settings: sales.delivery_enabled */
+  deliveryEnabled: boolean
   branchName: string
   promptPayId: string
   device: { id: string; name: string }
@@ -251,7 +256,7 @@ export interface KdsTicketDto {
   channel: DeliveryChannel | null
   status: 'new' | 'preparing' | 'ready'
   createdAt: number
-  items: { qty: number; name: string; sizeLabel: string | null; mods: { text: string; highlight: boolean }[]; note: string | null }[]
+  items: { ticketId: string; done: boolean; qty: number; name: string; sizeLabel: string | null; mods: { text: string; highlight: boolean }[]; note: string | null }[]
 }
 
 export interface SettingsDto {
@@ -267,6 +272,15 @@ export interface SettingsDto {
   'tax.seller_tax_id': string
   'tax.seller_branch': string
   'tax.seller_address': string
+  'kds.complete_on_pay': boolean
+  'sales.delivery_enabled': boolean
+  'promptpay.verify_mode': PaymentVerifyMode
+  'promptpay.provider': PaymentProvider
+  'promptpay.merchant_id': string
+  'promptpay.provider_branch': string
+  'promptpay.provider_endpoint': string
+  'update.feed_url': string
+  'update.auto_check': boolean
   /** read-only info for the settings page */
   branchCode: string
   billNoExample: string
@@ -349,6 +363,15 @@ const categoryInput = z.object({
   icon: optText(40),
   color: optText(20),
   kdsStation: optText(30),
+  /** '' or null → no prefix; letters are upper-cased */
+  skuPrefix: z
+    .string()
+    .trim()
+    .max(6)
+    .transform((v) => v.toUpperCase() || null)
+    .pipe(z.string().regex(/^[A-Z0-9]{1,6}$/).nullable())
+    .nullable()
+    .optional(),
   sortOrder: z.number().int().default(0),
 })
 
@@ -377,6 +400,8 @@ export const salesApi = {
   'catalog.categories': ep<CategoryDto[]>()('products:view', z.undefined()),
   'catalog.saveCategory': ep<CategoryDto>()('products:update', categoryInput.extend({ id: id.optional() })),
   'catalog.deleteCategory': ep<null>()('products:delete', z.object({ id })),
+  /** the code a new product gets when its SKU is left empty (preview; saving assigns it for real) */
+  'catalog.nextSku': ep<string>()('products:view', z.object({ categoryId: id.nullable() })),
   'catalog.products': ep<ProductDto[]>()('products:view', z.undefined()),
   'catalog.saveProduct': ep<ProductDto>()('products:update', productInput.extend({ id: id.optional() })),
   'catalog.deleteProduct': ep<null>()('products:delete', z.object({ id })),
@@ -476,6 +501,9 @@ export const salesApi = {
   // ---- KDS ----------------------------------------------------------------
   'kds.tickets': ep<KdsTicketDto[]>()('kds:view', z.object({ station: z.string().max(30).default('bar') })),
   'kds.advance': ep<null>()('kds:update', z.object({ billId: id, station: z.string().max(30).default('bar') })),
+  'kds.toggleItem': ep<null>()('kds:update', z.object({ ticketId: id, station: z.string().max(30).default('bar') })),
+  /** returns the recalled bill id, or null when nothing was bumped */
+  'kds.recall': ep<string | null>()('kds:update', z.object({ station: z.string().max(30).default('bar') })),
 
   // ---- settings -----------------------------------------------------------
   'settings.get': ep<SettingsDto>()('settings:view', z.undefined()),
@@ -494,6 +522,15 @@ export const salesApi = {
         'tax.seller_tax_id': z.string().trim().max(20),
         'tax.seller_branch': z.string().trim().max(5),
         'tax.seller_address': z.string().trim().max(300),
+        'kds.complete_on_pay': z.boolean(),
+        'sales.delivery_enabled': z.boolean(),
+        'promptpay.verify_mode': z.enum(PAYMENT_VERIFY_MODES),
+        'promptpay.provider': z.enum(PAYMENT_PROVIDERS),
+        'promptpay.merchant_id': z.string().trim().max(80),
+        'promptpay.provider_branch': z.string().trim().max(80),
+        'promptpay.provider_endpoint': z.string().trim().max(300),
+        'update.feed_url': z.string().trim().max(300),
+        'update.auto_check': z.boolean(),
       })
       .partial(),
   ),

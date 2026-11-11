@@ -3,10 +3,11 @@ import type { CategoryDto, IngredientDto, ModifierGroupDto } from '@shared/api-s
 import { uuidv7 } from '@shared/id'
 import { MoneyInput } from '@renderer/components/modal'
 import { Card, DangerButton, Field, GradientButton, OutlineButton, PageHeader, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { money, qty } from '@renderer/lib/format'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 
 const rowCls = (sel: boolean) => cn('box-border flex min-h-[60px] cursor-pointer items-center gap-3 rounded-2xl border-2 px-3 py-1.5', sel ? 'border-[#9776F6] bg-[#F5F2FE]' : 'border-transparent bg-[#F7F5F2]')
@@ -24,10 +25,12 @@ function toMilli(s: string): number | null {
 
 export function CategoriesPage() {
   const { can } = useSession()
+  const features = useFeatures()
   const toast = useToast()
+  const confirm = useConfirm()
   const c = t.categories
   const [items, setItems] = useState<CategoryDto[]>([])
-  const [draft, setDraft] = useState<{ id?: string; name: string; kdsStation: string; sortOrder: string } | null>(null)
+  const [draft, setDraft] = useState<{ id?: string; name: string; kdsStation: string; skuPrefix: string; sortOrder: string } | null>(null)
   const editable = can('products:update')
 
   const load = useCallback(() => call('catalog.categories').then(setItems, (err: unknown) => toast(errorMessage(err), 'error')), [toast])
@@ -42,16 +45,16 @@ export function CategoriesPage() {
   async function save() {
     if (!draft) return
     try {
-      const saved = await call('catalog.saveCategory', { ...(draft.id ? { id: draft.id } : {}), name: draft.name, kdsStation: draft.kdsStation || null, sortOrder: Number(draft.sortOrder) || 0 })
+      const saved = await call('catalog.saveCategory', { ...(draft.id ? { id: draft.id } : {}), name: draft.name, kdsStation: draft.kdsStation || null, skuPrefix: draft.skuPrefix || null, sortOrder: Number(draft.sortOrder) || 0 })
       toast(t.crud.saved)
       await load()
-      setDraft({ id: saved.id, name: saved.name, kdsStation: saved.kdsStation ?? '', sortOrder: String(saved.sortOrder) })
+      setDraft({ id: saved.id, name: saved.name, kdsStation: saved.kdsStation ?? '', skuPrefix: saved.skuPrefix ?? '', sortOrder: String(saved.sortOrder) })
     } catch (err) {
       toast(errorMessage(err), 'error')
     }
   }
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('catalog.deleteCategory', { id: draft.id })
       toast(t.crud.deleted)
@@ -64,11 +67,11 @@ export function CategoriesPage() {
 
   return (
     <>
-      <PageHeader icon="cup" tone="pink" title={c.title} subtitle={c.subtitle} actions={editable && <GradientButton onClick={() => setDraft({ name: '', kdsStation: 'bar', sortOrder: String(items.length) })}>{c.add}</GradientButton>} />
+      <PageHeader icon="cup" tone="pink" title={c.title} subtitle={c.subtitle} actions={editable && <GradientButton onClick={() => setDraft({ name: '', kdsStation: 'bar', skuPrefix: '', sortOrder: String(items.length) })}>{c.add}</GradientButton>} />
       <div className="flex flex-wrap items-start gap-[18px]">
         <Card className="flex min-w-0 flex-[1_1_420px] flex-col gap-1.5">
           {items.map((it) => (
-            <div key={it.id} role="listitem" className={rowCls(it.id === draft?.id)} onClick={() => setDraft({ id: it.id, name: it.name, kdsStation: it.kdsStation ?? '', sortOrder: String(it.sortOrder) })}>
+            <div key={it.id} role="listitem" className={rowCls(it.id === draft?.id)} onClick={() => setDraft({ id: it.id, name: it.name, kdsStation: it.kdsStation ?? '', skuPrefix: it.skuPrefix ?? '', sortOrder: String(it.sortOrder) })}>
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="text-[15px] font-semibold">{it.name}</span>
                 <span className="text-xs text-muted-foreground">
@@ -87,6 +90,7 @@ export function CategoriesPage() {
               <Field label={c.name}>
                 <TextInput value={draft.name} maxLength={120} autoFocus disabled={!editable} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </Field>
+              {features.kds && (
               <Field label={c.station}>
                 <SelectInput value={draft.kdsStation} disabled={!editable} onChange={(e) => setDraft({ ...draft, kdsStation: e.target.value })}>
                   {(Object.keys(c.stations) as (keyof typeof c.stations)[]).map((s) => (
@@ -95,6 +99,10 @@ export function CategoriesPage() {
                     </option>
                   ))}
                 </SelectInput>
+              </Field>
+              )}
+              <Field label={c.skuPrefix} hint={c.skuPrefixHint(draft.skuPrefix || 'P')}>
+                <TextInput value={draft.skuPrefix} maxLength={6} placeholder="P" disabled={!editable} onChange={(e) => setDraft({ ...draft, skuPrefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') })} />
               </Field>
               <Field label={c.sort}>
                 <TextInput inputMode="numeric" value={draft.sortOrder} disabled={!editable} onChange={(e) => setDraft({ ...draft, sortOrder: e.target.value.replace(/\D/g, '') })} />
@@ -156,7 +164,9 @@ const toGroupDraft = (g: ModifierGroupDto): GroupDraft => ({
 
 export function ModifiersPage() {
   const { can } = useSession()
+  const features = useFeatures()
   const toast = useToast()
+  const confirm = useConfirm()
   const m = t.modifiers
   const [groups, setGroups] = useState<ModifierGroupDto[]>([])
   const [ingredients, setIngredients] = useState<IngredientDto[]>([])
@@ -204,7 +214,7 @@ export function ModifiersPage() {
     }
   }
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('catalog.deleteGroup', { id: draft.id })
       toast(t.crud.deleted)
@@ -248,10 +258,12 @@ export function ModifiersPage() {
                   <TextInput inputMode="numeric" value={draft.max} disabled={!editable} onChange={(e) => setDraft({ ...draft, max: e.target.value.replace(/\D/g, '') })} />
                 </Field>
               </div>
+              {features.kds && (
               <div className="flex min-h-12 items-center justify-between">
                 <span className="text-[15px]">{m.highlight}</span>
                 <Toggle checked={draft.kdsHighlight} label={m.highlight} disabled={!editable} onChange={(v) => setDraft({ ...draft, kdsHighlight: v })} />
               </div>
+              )}
               <span className="text-sm font-bold">{m.options}</span>
               {draft.options.map((o) => (
                 <div key={o.id} className="flex flex-col gap-2 rounded-2xl bg-[#F7F5F2] p-3">
@@ -276,6 +288,8 @@ export function ModifiersPage() {
                       ×
                     </button>
                   </div>
+                  {features.inventory && (
+                    <>
                   <span className="text-xs font-semibold text-muted-foreground">{m.optionBom}</span>
                   {o.items.map((it) => (
                     <div key={it.key} className="grid grid-cols-[1fr_90px_130px_auto] items-center gap-2">
@@ -301,6 +315,8 @@ export function ModifiersPage() {
                     <button type="button" onClick={() => updOpt(o.id, { items: [...o.items, { key: uuidv7(), ingredientId: '', qty: '', sizeMode: 'fixed' }] })} className="self-start border-0 bg-transparent text-sm font-semibold text-accent-foreground">
                       {t.products.addIngredient}
                     </button>
+                  )}
+                    </>
                   )}
                   {o.price ? <span className="text-xs text-muted-foreground">+{money(o.price)}</span> : null}
                 </div>

@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
 import { createHashRouter, Navigate, RouterProvider } from 'react-router-dom'
 import { AppShell } from './components/app-shell'
-import { ROUTES, type NavLeaf } from './components/nav'
+import { navFeatureOn, ROUTES, type NavLeaf } from './components/nav'
 import { ToastProvider } from './components/ui'
+import { ConfirmProvider } from './components/confirm'
 import { t } from './i18n'
 import { SessionProvider, useSession } from './lib/session'
 import { ChangePasswordPage } from './pages/change-password'
@@ -24,9 +25,15 @@ import { LabelPage } from './pages/label'
 import { CouponsPage, PromoPage } from './pages/promo'
 import { ReceivingPage } from './pages/receiving'
 import { DeliveryCommissionPage, ReportsPage, ZReportPage } from './pages/reports'
+import { ExpenseReportPage, ExpiryReportPage, SalesSummaryPage } from './pages/reports-more'
 import { WastePage } from './pages/waste'
-import { ForbiddenPage, PlaceholderPage, SystemPage } from './pages/simple'
+import { FeatureOffPage, ForbiddenPage, PlaceholderPage } from './pages/simple'
+import { AboutPage, ManualPage } from './pages/system'
 import { UsersPage } from './pages/users'
+import { AuditPage } from './pages/audit'
+import { BackupPage } from './pages/backup'
+import { AccountPage } from './pages/account'
+import { HostOfflinePage } from './pages/lan'
 
 /** Pages that exist so far; every other menu route shows a phase placeholder. */
 const PAGES: Record<string, () => ReactNode> = {
@@ -46,33 +53,47 @@ const PAGES: Record<string, () => ReactNode> = {
   '/reports': () => <ReportsPage />,
   '/z-report': () => <ZReportPage />,
   '/delivery-commission': () => <DeliveryCommissionPage />,
+  '/sales-summary': () => <SalesSummaryPage />,
+  '/expense-report': () => <ExpenseReportPage />,
+  '/expiry-report': () => <ExpiryReportPage />,
   '/label': () => <LabelPage />,
   '/settings': () => <SettingsPage />,
   '/users': () => <UsersPage />,
   '/roles': () => <RolesPage />,
-  '/system': () => <SystemPage />,
+  '/audit': () => <AuditPage />,
+  '/backup': () => <BackupPage />,
+  '/system': () => <AboutPage />,
+  '/manual': () => <ManualPage />,
+  '/account': () => <AccountPage />,
 }
 
 function Guarded({ route }: { route: NavLeaf }) {
-  const { can } = useSession()
+  const { can, system } = useSession()
   // UI gate only — the main process re-checks every call (CLAUDE.md rule 5)
   if (route.permission && !can(route.permission)) return <ForbiddenPage />
+  if (!navFeatureOn(route.feature, system)) return <FeatureOffPage />
   return <>{PAGES[route.path]?.() ?? <PlaceholderPage route={route} />}</>
 }
 
 /** Full-screen pages with their own header (no sidebar), per the confirmed prototypes. */
-const FULL_SCREEN: Record<string, { permission: NavLeaf['permission']; page: () => ReactNode }> = {
+const FULL_SCREEN: Record<string, { permission: NavLeaf['permission']; feature?: NavLeaf['feature']; page: () => ReactNode }> = {
   '/pos': { permission: 'pos:view', page: () => <PosPage /> },
-  '/kds': { permission: 'kds:view', page: () => <KdsPage /> },
+  '/kds': { permission: 'kds:view', feature: 'kds', page: () => <KdsPage /> },
 }
 
 function FullScreen({ path }: { path: string }) {
-  const { can } = useSession()
+  const { can, system } = useSession()
   const def = FULL_SCREEN[path]!
   if (def.permission && !can(def.permission))
     return (
       <AppShell>
         <ForbiddenPage />
+      </AppShell>
+    )
+  if (!navFeatureOn(def.feature, system))
+    return (
+      <AppShell>
+        <FeatureOffPage />
       </AppShell>
     )
   return <>{def.page()}</>
@@ -96,6 +117,7 @@ function Gate() {
   const { status, setup, user } = useSession()
   // the customer display needs no login: it only shows what the POS pushes
   if (window.location.hash.startsWith('#/cfd')) return <CfdPage />
+  if (status === 'offline') return <HostOfflinePage />
   if (status === 'loading') return <div className="flex h-full items-center justify-center text-muted-foreground">{t.common.loading}</div>
   if (setup?.setupRequired) return <SetupPage />
   if (!user) return <LoginPage />
@@ -107,7 +129,9 @@ export function App() {
   return (
     <SessionProvider>
       <ToastProvider>
-        <Gate />
+        <ConfirmProvider>
+          <Gate />
+        </ConfirmProvider>
       </ToastProvider>
     </SessionProvider>
   )

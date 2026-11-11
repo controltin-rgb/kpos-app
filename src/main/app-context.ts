@@ -25,12 +25,29 @@ import { PromoService } from '@main/services/promo.service'
 import { ReportService } from '@main/services/report.service'
 import { DashboardService } from '@main/services/dashboard.service'
 import { UsersService } from '@main/services/users.service'
+import { SystemService } from '@main/services/system.service'
+import { PaymentVerifyService } from '@main/services/payment-verify.service'
+import { MemorySecretStore, type SecretStore } from '@main/secrets'
+import { noUpdater, type UpdaterPort } from '@main/updater'
+import { CloudBackup, type CloudConfig } from '@main/backup/cloud'
+import type { S3Fetch } from '@main/backup/s3'
+import { CLOUD_SYNC_INTERVAL_MIN, type CloudOverviewDto } from '@shared/api-system'
+import { hasPermission } from '@shared/permissions'
 import { formatBillNo, periodKey } from '@shared/bill-number'
 import { AppError } from '@shared/errors'
 import { buildPromptPayPayload } from '@shared/promptpay'
 import type { AppEvent } from '@shared/api'
 import type { CfdState } from '@shared/api-sales'
 import { renderZReport } from '@main/print/z-report'
+import { remoteScope } from '@main/request-scope'
+import { LanManager, type LanManagerOptions } from '@main/lan/lan-manager'
+import { SyncHostService } from '@main/sync/sync-host.service'
+import { BackupService, type BackupPaths } from '@main/backup/backup.service'
+import { JournalService } from '@main/backup/journal'
+import { AuditQueryService } from '@main/services/audit-query.service'
+import { LicenseService } from '@main/license/license.service'
+import { LICENSE_PUBLIC_KEYS } from '@main/license/public-key'
+import { featureForChannel, READ_ONLY_BLOCKED_CHANNELS, type LicenseFeatures } from '@shared/license'
 
 export interface AppContextOptions {
   db: Db
@@ -50,6 +67,33 @@ export interface AppContextOptions {
   receiptsDir?: string
   /** native file picker for receipt images; returns an absolute path or null */
   pickFile?: () => Promise<string | null>
+  /** DB file + backup folder; null/absent when this process does not own a DB file (tests in memory, Client mode) */
+  backupPaths?: BackupPaths | null
+  /**
+   * Change journal for point-in-time restore (D38), needs backupPaths. `restored`: a staged restore
+   * was just swapped in. Absent → Tier A snapshots only.
+   */
+  journal?: { dir: string; restored?: boolean }
+  /** native folder picker for the off-site backup folder */
+  pickFolder?: () => Promise<string | null>
+  /** restarts the app (used to swap in a restored database before it is opened) */
+  relaunch?: () => void
+  /** this machine's Hardware ID for licensing (Electron: machineFingerprint()) */
+  hardwareId?: string
+  /** trusted license public keys (default: the embedded ones) */
+  licensePublicKeys?: readonly string[]
+  /** trial features override (tests); the app uses src/shared/trial-package.json */
+  trialFeatures?: LicenseFeatures
+  /** native dialog to pick a .LIC; returns its text */
+  pickLicenseFile?: () => Promise<string | null>
+  /** credentials typed in by the shop, kept outside the DB (default: memory, for tests) */
+  secrets?: SecretStore
+  /** auto-update (D42); default: never updates */
+  updater?: UpdaterPort
+  /** fetch used by the cloud client (tests inject a fake S3) */
+  cloudFetch?: S3Fetch
+  /** Host/Client networking (D33); absent → this machine stays Standalone */
+  lan?: Omit<LanManagerOptions, 'appVersion'>
 }
 
 export type { AppEvent } from '@shared/api'
@@ -58,13 +102,35 @@ export type { AppEvent } from '@shared/api'
 export function createAppContext(opts: AppContextOptions) {
   const { db } = opts
   const now = opts.now ?? Date.now
+  const audit = new AuditService(db, now)
+  // the journal starts before anything writes, so every change after the timeline start is in it
+  let settingsRef: SettingsService | null = null
+  const journal =
+    opts.journal && opts.backupPaths
+      ? new JournalService(db, audit, {
+          dir: opts.journal.dir,
+          now,
+          offsiteRoot: () => (settingsRef?.get('backup.offsite_enabled') ? settingsRef.get('backup.offsite_dir') || null : null),
+        })
+      : null
+  try {
+    journal?.start({ restored: opts.journal?.restored ?? false })
+  } catch (err) {
+    opts.log?.('[journal] start failed — point-in-time restore is off', err) // Tier A snapshots still work
+  }
   seedSystemRoles(db, now())
 
-  const audit = new AuditService(db, now)
+  const license = new LicenseService(db, audit, {
+    hardwareId: opts.hardwareId ?? 'HW-0000-0000-0000-0000',
+    publicKeys: opts.licensePublicKeys ?? LICENSE_PUBLIC_KEYS,
+    now,
+    ...(opts.pickLicenseFile ? { pickFile: opts.pickLicenseFile } : {}),
+    ...(opts.trialFeatures ? { trialFeatures: opts.trialFeatures } : {}),
+  })
   const auth = createAuth(db, opts.authSecret)
   const authService = new AuthService(db, auth, audit, now)
   const setup = new SetupService(db, authService, audit, now)
-  const users = new UsersService(db, authService, audit, now)
+  const users = new UsersService(db, authService, audit, now, () => license.employeeCap())
   const roles = new RolesService(db, audit, now)
   const sessions = new SessionRegistry()
   const events = new EventEmitter()
@@ -72,24 +138,91 @@ export function createAppContext(opts: AppContextOptions) {
   let lastCfd: CfdState | null = null
 
   const device = new DeviceService(db, opts.device ?? { id: '00000000-0000-7000-8000-000000000001', name: 'POS-01', hardwareId: 'test', role: 'standalone' }, now)
+  audit.setDeviceProvider(() => device.auditDeviceId())
   const docs = new DocNumberService(db)
   const settings = new SettingsService(db, audit, now)
+  settingsRef = settings
   const stock = new StockService(db)
-  const catalog = new CatalogService(db, audit, now)
+  const features = () => license.status().features
+  const catalog = new CatalogService(db, audit, now, features)
   const inventory = new InventoryService(db, stock, audit, now)
-  const shifts = new ShiftService(db, device, docs, audit, now)
-  const promo = new PromoService(db, settings, authService, audit, now)
-  const sales = new SaleService(db, catalog, stock, shifts, docs, settings, authService, audit, promo, now)
+  const shifts = new ShiftService(db, device, docs, audit, now, features)
+  const promo = new PromoService(db, settings, authService, audit, now, features)
+  const sales = new SaleService(db, catalog, stock, shifts, docs, settings, authService, audit, promo, now, features)
   const kds = new KdsService(db, now)
   const expenses = new ExpenseService(db, shifts, docs, audit, opts.receiptsDir ?? null, now)
   const stockOps = new StockOpsService(db, stock, catalog, shifts, docs, settings, audit, (b) => device.ensure(b), now)
   const org = new OrgRepo(db)
-  const reports = new ReportService(db, sales, shifts, stockOps, expenses, docs, settings, audit, now)
-  const dashboard = new DashboardService(db, reports, shifts, stock, now)
+  const reports = new ReportService(db, sales, shifts, stockOps, expenses, docs, settings, audit, now, features)
+  const dashboard = new DashboardService(db, reports, shifts, stock, now, () => license.status().daysLeft, features)
+  const backup = new BackupService(db, audit, settings, { paths: opts.backupPaths ?? null, now, cloudLicensed: () => license.status().features.cloudBackup, journal, ...(opts.pickFolder ? { pickFolder: opts.pickFolder } : {}) })
+  const auditQuery = new AuditQueryService(db, now)
+  const system = new SystemService(db, audit, authService, now)
+  const secrets = opts.secrets ?? new MemorySecretStore()
+  const updater = opts.updater ?? noUpdater(opts.versions?.app ?? '0.0.0')
+  const payVerify = new PaymentVerifyService(settings, secrets, now)
+  const cloudLicensed = () => license.status().features.cloudBackup
+  const cloudConfig = async (): Promise<CloudConfig | null> => {
+    const secretAccessKey = await secrets.get('cloud.secret_access_key')
+    const passphrase = await secrets.get('cloud.passphrase')
+    const c = { endpoint: settings.get('cloud.endpoint'), region: settings.get('cloud.region'), bucket: settings.get('cloud.bucket'), prefix: settings.get('cloud.prefix'), accessKeyId: settings.get('cloud.access_key_id') }
+    if (!c.endpoint || !c.bucket || !c.accessKeyId || !secretAccessKey || !passphrase) return null
+    return { ...c, secretAccessKey, passphrase }
+  }
+  const cloud = opts.backupPaths ? new CloudBackup(opts.backupPaths.backupDir, cloudConfig, { now, ...(opts.cloudFetch ? { fetch: opts.cloudFetch } : {}) }) : null
+  const cloudConfigured = () =>
+    !!(settings.get('cloud.endpoint') && settings.get('cloud.bucket') && settings.get('cloud.access_key_id') && secrets.has('cloud.secret_access_key') && secrets.has('cloud.passphrase'))
+  const cloudOverview = (): CloudOverviewDto => ({
+    ...(cloud?.status(cloudConfigured()) ?? { configured: false, lastSyncAt: null, lastError: null, lastErrorAt: null, uploadedFiles: 0, pendingFiles: 0, running: false }),
+    licensed: cloudLicensed(),
+    enabled: settings.get('cloud.enabled'),
+    endpoint: settings.get('cloud.endpoint'),
+    region: settings.get('cloud.region'),
+    bucket: settings.get('cloud.bucket'),
+    prefix: settings.get('cloud.prefix'),
+    accessKeyId: settings.get('cloud.access_key_id'),
+    hasSecretKey: secrets.has('cloud.secret_access_key'),
+    hasPassphrase: secrets.has('cloud.passphrase'),
+    intervalMin: CLOUD_SYNC_INTERVAL_MIN,
+  })
+  /** scheduler (force=false: only when switched on) and "sync now"; needs the license feature (D29) */
+  const cloudSync = async (force: boolean) => {
+    if (!cloud) throw new AppError('BACKUP_UNAVAILABLE')
+    if (!cloudLicensed()) throw new AppError('CLOUD_NOT_CONFIGURED', { reason: 'license' })
+    if (!force && !settings.get('cloud.enabled')) return cloudOverview()
+    await cloud.sync()
+    return cloudOverview()
+  }
+  const syncHost = new SyncHostService(db, catalog, promo, settings, docs, sales, audit, now)
+  const lan = new LanManager(
+    {
+      db,
+      audit,
+      settings,
+      license,
+      device,
+      events,
+      sessions,
+      now,
+      sync: {
+        snapshot: (deviceId) => syncHost.snapshot(deviceId),
+        ingest: (deviceId, bills) => syncHost.ingest(deviceId, bills),
+        changed: () => (emit({ type: 'shift.changed' }), emit({ type: 'kds.changed' })),
+      },
+      setupRequired: () => setup.status().setupRequired, dispatch: (sender, ch, input) => dispatch(sender, ch, input) },
+    { certDir: null, appVersion: opts.versions?.app ?? '0.0.0', ...opts.lan },
+  )
   const printHtml = opts.printHtml ?? (async () => {})
   const print = async (html: string, a4 = false) => {
+    const paperMm = a4 ? 210 : settings.get('receipt.paper_mm')
+    // a LAN Client prints on its own printer: hand the document back with the reply (D33)
+    const scope = remoteScope()
+    if (scope) {
+      scope.effects.push({ kind: 'print', html, paperMm })
+      return
+    }
     try {
-      await printHtml(html, { paperMm: a4 ? 210 : settings.get('receipt.paper_mm') })
+      await printHtml(html, { paperMm })
     } catch (err) {
       throw new AppError('PRINT_FAILED', { message: String(err) })
     }
@@ -101,7 +234,7 @@ export function createAppContext(opts: AppContextOptions) {
     const branch = org.firstBranch()
     const code = branch ? docs.branchCode(branch.id) : 'A'
     const policy = all['bill.reset_policy']
-    return { ...all, branchCode: code, billNoExample: formatBillNo(code, policy, periodKey(policy, now()), 1) }
+    return { ...all, 'license.employee_cap': license.employeeCap(), branchCode: code, billNoExample: formatBillNo(code, policy, periodKey(policy, now()), 1) }
   }
 
   async function printBill(actor: Parameters<typeof sales.get>[0], billId: string, reprint: boolean) {
@@ -122,6 +255,11 @@ export function createAppContext(opts: AppContextOptions) {
 
   const handlers: Handlers = {
     'system.info': () => ({
+      deviceRole: device.local.role,
+      deviceName: device.local.name,
+      hostName: null,
+      hostConnected: null,
+      offlinePending: null,
       appVersion: v.app,
       electron: v.electron,
       node: v.node,
@@ -129,6 +267,8 @@ export function createAppContext(opts: AppContextOptions) {
       platform: v.platform,
       sqlite: sqliteVersion(db),
       schemaVersion: db.pragma('user_version', { simple: true }) as number,
+      deliveryEnabled: settings.get('sales.delivery_enabled'),
+      features: license.status().features,
     }),
 
     'setup.status': () => setup.status(),
@@ -152,6 +292,10 @@ export function createAppContext(opts: AppContextOptions) {
     'auth.changePassword': async (ctx, input) =>
       toSessionUser(await authService.changeOwnPassword(ctx.actor, input.currentPassword, input.newPassword)),
 
+    'profile.get': (ctx) => authService.profile(ctx.actor),
+    'profile.update': (ctx, input) => authService.updateProfile(ctx.actor, input),
+    'profile.changePin': (ctx, input) => authService.changeOwnPin(ctx.actor, input.currentPassword, input.newPin),
+
     'users.list': (ctx, input) => users.list(ctx.actor, input),
     'users.get': (ctx, input) => users.get(ctx.actor, input.id),
     'users.roleOptions': (ctx) => users.roleOptions(ctx.actor),
@@ -172,7 +316,140 @@ export function createAppContext(opts: AppContextOptions) {
       return null
     },
 
-    'audit.verify': () => audit.verifyChain(),
+    'audit.verify': () => ({ ...audit.verifyChain(), anchor: backup.checkAuditAnchor() }),
+    'audit.list': (_ctx, input) => auditQuery.list(input),
+
+    // ---- Host / Client over the LAN (D33–D34) ------------------------------
+    'lan.status': () => lan.status(),
+    'lan.syncNow': () => lan.status(),
+    'lan.setMode': (ctx, input) => lan.setMode(ctx.actor, input.mode, input.port),
+    'lan.startPairing': (ctx) => lan.startPairing(ctx.actor),
+    'lan.cancelPairing': () => (lan.host.cancelPairing(), null),
+    'lan.revokeDevice': (ctx, input) => (lan.revoke(ctx.actor, input.id), null),
+    'lan.ping': (_ctx, input) => lan.ping(input.address),
+    'lan.pair': (_ctx, input) => lan.pair(input),
+    'lan.unpair': () => {
+      throw new AppError('LAN_NOT_AVAILABLE') // only a Client can unpair
+    },
+
+    // ---- license (Implement.md §6.11) -------------------------------------
+    'license.status': () => license.status(),
+    'license.import': async (ctx, input) => {
+      const raw = input.content ?? (await license.pickFile())
+      if (raw === null) return null // dialog cancelled
+      return license.install(ctx.actor, raw)
+    },
+    'audit.overview': () => auditQuery.overview(),
+
+    // ---- backup / restore (Implement.md §6.10) ----------------------------
+    'backup.overview': () => backup.overview(),
+    'backup.list': () => backup.list(),
+    'backup.run': (ctx) => backup.run('manual', ctx.actor),
+    'backup.saveSchedule': (ctx, input) => backup.saveSchedule(ctx.actor, input),
+    'backup.pickFolder': () => (remoteScope() ? null : backup.pickFolder()), // the folder dialog belongs to the Host machine
+    'backup.restoreCopy': (ctx, input) => backup.restoreCopy(ctx.actor, input.id),
+    'backup.restoreReplace': async (ctx, input) => {
+      await backup.stageReplace(ctx.actor, input.id)
+      // let the reply reach the window before the app restarts
+      if (opts.relaunch) setTimeout(opts.relaunch, 300)
+      return { restarting: !!opts.relaunch }
+    },
+    'backup.pitrCopy': (ctx, input) => backup.pitrCopy(ctx.actor, input.at),
+    'backup.pitrReplace': async (ctx, input) => {
+      await backup.pitrReplace(ctx.actor, input.at)
+      if (opts.relaunch) setTimeout(opts.relaunch, 300)
+      return { restarting: !!opts.relaunch }
+    },
+
+    // ---- System menu: about / manual / reset ------------------------------
+    'system.about': () => system.about(),
+    'system.saveAbout': (ctx, input) => system.saveAbout(ctx.actor, input.info),
+    'manual.list': (ctx, input) => system.manual(input.includeHidden && hasPermission(ctx.actor.grants, 'manual:update')),
+    'manual.save': (ctx, input) => system.saveManualPage(ctx.actor, input),
+    'manual.reset': (ctx, input) => (system.resetManualPage(ctx.actor, input.slug), null),
+    'system.resetDatabase': async (ctx, input) => {
+      if (remoteScope()) throw new AppError('LAN_NOT_AVAILABLE') // only on the machine that owns the database
+      await system.stageDatabaseReset(ctx.actor, input.password, opts.backupPaths?.dbPath ?? null)
+      if (opts.relaunch) setTimeout(opts.relaunch, 300)
+      return { restarting: !!opts.relaunch }
+    },
+
+    // ---- cloud backup (D43) ------------------------------------------------
+    'cloud.overview': () => cloudOverview(),
+    'cloud.save': async (ctx, input) => {
+      if (remoteScope()) throw new AppError('LAN_NOT_AVAILABLE') // the credentials stay on the Host
+      const before = cloudOverview()
+      settings.update(ctx.actor, {
+        'cloud.enabled': input.enabled,
+        'cloud.endpoint': input.endpoint,
+        'cloud.region': input.region || 'auto',
+        'cloud.bucket': input.bucket,
+        'cloud.prefix': input.prefix,
+        'cloud.access_key_id': input.accessKeyId,
+      })
+      if (input.secretAccessKey !== undefined) await secrets.set('cloud.secret_access_key', input.secretAccessKey)
+      if (input.passphrase !== undefined) await secrets.set('cloud.passphrase', input.passphrase)
+      if (input.secretAccessKey !== undefined || input.passphrase !== undefined)
+        audit.append({
+          action: 'backup.cloud_credentials',
+          permission: 'settings:update',
+          userId: ctx.actor.userId,
+          branchId: ctx.actor.branchId,
+          entity: 'settings',
+          entityId: 'cloud',
+          before: { hasSecretKey: before.hasSecretKey, hasPassphrase: before.hasPassphrase },
+          after: { hasSecretKey: secrets.has('cloud.secret_access_key'), hasPassphrase: secrets.has('cloud.passphrase') },
+          risk: 'high',
+        })
+      return cloudOverview()
+    },
+    'cloud.test': async () => {
+      if (!cloud) throw new AppError('BACKUP_UNAVAILABLE')
+      return { ok: true as const, objects: (await cloud.remote()).length }
+    },
+    'cloud.syncNow': async (ctx) => {
+      const r = await cloudSync(true)
+      audit.append({ action: 'backup.cloud_sync', permission: 'backup:create', userId: ctx.actor.userId, branchId: ctx.actor.branchId, entity: 'backup', after: { uploadedFiles: r.uploadedFiles }, risk: 'low' })
+      return r
+    },
+    'cloud.download': async (ctx) => {
+      if (!cloud) throw new AppError('BACKUP_UNAVAILABLE')
+      const files = await cloud.downloadAll()
+      const backups = backup.reconcile()
+      audit.append({ action: 'backup.cloud_download', permission: 'backup:restore', userId: ctx.actor.userId, branchId: ctx.actor.branchId, entity: 'backup', after: { files, backups }, risk: 'high' })
+      return { files, backups }
+    },
+
+    // ---- auto-update (D42) ------------------------------------------------
+    // auto-update off (D51): Clients read autoCheck=false from here, so they stop checking too
+    'update.status': () => (features().autoUpdate ? updater.status() : { ...updater.status(), autoCheck: false }),
+    'update.check': () => updater.check(),
+    'update.install': (ctx) => {
+      audit.append({ action: 'system.update_install', permission: 'settings:update', userId: ctx.actor.userId, branchId: ctx.actor.branchId, entity: 'system', after: { version: updater.status().version }, risk: 'medium' })
+      setTimeout(() => updater.install(), 300)
+      return null
+    },
+
+    // ---- PromptPay automatic check (D41) -----------------------------------
+    'pos.verifyPromptPay': (_ctx, input) => payVerify.verify(input),
+    'payments.verifyInfo': () => ({ hasApiKey: secrets.has('promptpay.api_key') }),
+    'payments.saveApiKey': async (ctx, input) => {
+      if (remoteScope()) throw new AppError('LAN_NOT_AVAILABLE')
+      const before = secrets.has('promptpay.api_key')
+      if (input.apiKey !== undefined) await secrets.set('promptpay.api_key', input.apiKey)
+      audit.append({
+        action: 'settings.payment_api_key',
+        permission: 'settings:update',
+        userId: ctx.actor.userId,
+        branchId: ctx.actor.branchId,
+        entity: 'settings',
+        entityId: 'promptpay.api_key',
+        before: { hasApiKey: before },
+        after: { hasApiKey: secrets.has('promptpay.api_key') },
+        risk: 'high',
+      })
+      return { hasApiKey: secrets.has('promptpay.api_key') }
+    },
 
     // ---- catalog ----------------------------------------------------------
     'catalog.categories': (ctx) => catalog.categories(ctx.actor),
@@ -186,6 +463,7 @@ export function createAppContext(opts: AppContextOptions) {
     'catalog.deleteProduct': (ctx, input) => (catalog.deleteProduct(ctx.actor, input.id), null),
     'catalog.groups': (ctx) => catalog.groups(ctx.actor),
     'catalog.saveGroup': (ctx, input) => catalog.saveGroup(ctx.actor, input),
+    'catalog.nextSku': (ctx, input) => catalog.nextSku(ctx.actor, input.categoryId),
     'catalog.deleteGroup': (ctx, input) => (catalog.deleteGroup(ctx.actor, input.id), null),
 
     // ---- inventory --------------------------------------------------------
@@ -199,8 +477,9 @@ export function createAppContext(opts: AppContextOptions) {
     'pos.catalog': (ctx) => ({
       ...catalog.posCatalog(ctx.actor),
       vatRateBp: settings.get('vat.rate_bp'),
+      deliveryEnabled: settings.get('sales.delivery_enabled'),
       promptPayId: settings.get('promptpay.id'),
-      device: { id: device.local.id, name: device.local.name },
+      device: { id: device.currentId(), name: device.currentName() },
       branchName: ctx.actor.branchName,
     }),
     'pos.checkout': (ctx, input) => {
@@ -215,7 +494,10 @@ export function createAppContext(opts: AppContextOptions) {
       return null
     },
     'cfd.state': () => lastCfd,
-    'pos.openWindow': (ctx, input) => (opts.openWindow?.(input.kind, ctx.senderId), null),
+    'pos.openWindow': (ctx, input) => {
+      license.requireFeature(input.kind) // 'kds' | 'cfd' (D51)
+      return opts.openWindow?.(input.kind, ctx.senderId), null
+    },
     'pos.promptPayPayload': (_ctx, input) => {
       const id = settings.get('promptpay.id')
       if (!id) throw new AppError('PROMPTPAY_NOT_CONFIGURED')
@@ -246,7 +528,7 @@ export function createAppContext(opts: AppContextOptions) {
     },
 
     // ---- shifts -----------------------------------------------------------
-    'shift.current': () => shifts.current(),
+    'shift.current': (ctx) => shifts.current(ctx.actor),
     'shift.open': (ctx, input) => withShiftEvent(shifts.open(ctx.actor, input.openingFloatSatang)),
     'shift.cashMove': (ctx, input) => withShiftEvent(shifts.cashMove(ctx.actor, input.kind, input.amountSatang, input.reason)),
     'shift.close': (ctx, input) => withShiftEvent(shifts.close(ctx.actor, input.shiftId, input.counts, input.note ?? null)),
@@ -260,6 +542,16 @@ export function createAppContext(opts: AppContextOptions) {
 
     // ---- KDS --------------------------------------------------------------
     'kds.tickets': (ctx, input) => kds.tickets(ctx.actor, input.station),
+    'kds.toggleItem': (ctx, input) => {
+      kds.toggleItem(ctx.actor, input.ticketId, input.station)
+      emit({ type: 'kds.changed' })
+      return null
+    },
+    'kds.recall': (ctx, input) => {
+      const billId = kds.recall(ctx.actor, input.station)
+      if (billId) emit({ type: 'kds.changed' })
+      return billId
+    },
     'kds.advance': (ctx, input) => {
       kds.advance(ctx.actor, input.billId, input.station)
       emit({ type: 'kds.changed' })
@@ -298,6 +590,11 @@ export function createAppContext(opts: AppContextOptions) {
       const file = await opts.pickFile?.()
       return file ? expenses.storeReceipt(file) : null
     },
+    'expenses.uploadReceipt': (_ctx, input) => {
+      const data = Buffer.from(input.dataBase64, 'base64')
+      if (data.length === 0 || data.length > 5 * 1024 * 1024) throw new AppError('INVALID_INPUT', { fields: { receiptFile: ['size'] } })
+      return expenses.storeReceiptBytes(input.ext, data)
+    },
     'expenses.receipt': (ctx, input) => expenses.receiptDataUrl(ctx.actor, input.id),
 
     // ---- dashboard / notifications -----------------------------------------
@@ -308,9 +605,16 @@ export function createAppContext(opts: AppContextOptions) {
     // ---- reports / tax invoices --------------------------------------------
     'reports.sales': (ctx, input) => reports.salesReport(ctx.actor, input.from, input.to, input.bucket),
     'reports.profit': (ctx, input) => reports.profitReport(ctx.actor, input.from, input.to),
+    'reports.salesSummary': (ctx, input) => reports.salesSummary(ctx.actor, input.from, input.to),
+    'reports.expenses': (ctx, input) => reports.expenseReport(ctx.actor, input.from, input.to),
     'reports.zList': (ctx, input) => reports.zList(ctx.actor, input.from, input.to),
     'reports.export': async (ctx, input) => {
       const f = reports.exportCsv(ctx.actor, input.report, input.from, input.to)
+      const scope = remoteScope()
+      if (scope) {
+        scope.effects.push({ kind: 'save', name: f.name, content: f.content }) // the Client shows its own save dialog
+        return null
+      }
       return (await opts.saveFile?.(f.name, f.content)) ?? null
     },
     'tax.list': (ctx, input) => reports.taxList(ctx.actor, input.from, input.to, input.billId),
@@ -342,6 +646,9 @@ export function createAppContext(opts: AppContextOptions) {
     'members.search': (ctx, input) => promo.search(ctx.actor, input.phone),
     'members.list': (ctx, input) => promo.list(ctx.actor, input),
     'members.register': (ctx, input) => promo.register(ctx.actor, input),
+    'members.save': (ctx, input) => promo.save(ctx.actor, input),
+    'members.detail': (ctx, input) => promo.detail(ctx.actor, input.id, input.page, input.pageSize),
+    'members.revealContact': (ctx, input) => promo.revealContact(ctx.actor, input.id),
     'members.adjustPoints': (ctx, input) => promo.adjustPoints(ctx.actor, input.id, input.delta, input.reason),
     'members.erase': (ctx, input) => (promo.erase(ctx.actor, input.id, input.reason), null),
     'members.pointsRules': () => promo.pointsRules(),
@@ -360,11 +667,16 @@ export function createAppContext(opts: AppContextOptions) {
     handlers,
     sessions,
     resolveActor: (token) => authService.resolve(token),
+    gate: (ch) => {
+      if (READ_ONLY_BLOCKED_CHANNELS.has(ch) && license.isReadOnly()) return { code: 'LICENSE_READ_ONLY' }
+      const feature = featureForChannel(ch)
+      return feature && !license.status().features[feature] ? { code: 'FEATURE_NOT_LICENSED', data: { feature } } : null
+    },
     audit,
     ...(opts.log ? { log: opts.log } : {}),
   })
 
-  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard }
+  return { db, auth, audit, authService, setup, users, roles, sessions, dispatch, events, device, docs, settings, stock, catalog, inventory, shifts, sales, kds, stockOps, expenses, promo, reports, dashboard, backup, journal, license, lan, syncHost, system, cloud, cloudSync, updater, secrets }
 }
 
 export type AppContext = ReturnType<typeof createAppContext>

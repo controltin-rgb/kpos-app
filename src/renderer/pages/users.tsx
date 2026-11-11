@@ -15,6 +15,7 @@ import {
   Toggle,
   useToast,
 } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage, fieldErrors } from '@renderer/lib/api'
 import { formatDateTimeShort, initials } from '@renderer/lib/format'
@@ -58,6 +59,7 @@ function Avatar({ name, roleKey, size }: { name: string; roleKey: string | null;
 export function UsersPage() {
   const { can, user: me } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const [filters, setFilters] = useState({ search: '', roleId: '', status: 'all' as 'all' | 'active' | 'inactive', page: 1 })
   const [list, setList] = useState<UserList | null>(null)
   const [roles, setRoles] = useState<RoleOption[]>([])
@@ -185,7 +187,7 @@ export function UsersPage() {
   }
 
   async function remove() {
-    if (!selected || !window.confirm(u.deleteConfirm(selected.displayName))) return
+    if (!selected || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: u.deleteConfirm(selected.displayName), confirmLabel: t.confirmDialog.delete }))) return
     const ok = await run(() => call('users.delete', { id: selected.id }), u.deleted)
     if (ok !== undefined) {
       setSelected(null)

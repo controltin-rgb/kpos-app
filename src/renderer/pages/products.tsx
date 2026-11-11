@@ -4,10 +4,11 @@ import { requirementPerUnit } from '@shared/bom'
 import { uuidv7 } from '@shared/id'
 import { MoneyInput, Segmented } from '@renderer/components/modal'
 import { Card, Chip, DangerButton, Field, GradientButton, OutlineButton, PageHeader, Pagination, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage, fieldErrors } from '@renderer/lib/api'
 import { money, qty } from '@renderer/lib/format'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 
 const pr = t.products
@@ -87,7 +88,9 @@ function toDraft(p: ProductDto): Draft {
 /** docs/design/Products.dc.html (draft): products, sizes with multipliers, BOM with size modes. */
 export function ProductsPage() {
   const { can } = useSession()
+  const features = useFeatures() // license: no recipe/cost tab without inventory, no option groups without modifiers (D51)
   const toast = useToast()
+  const confirm = useConfirm()
   const [products, setProducts] = useState<ProductDto[]>([])
   const [categories, setCategories] = useState<CategoryDto[]>([])
   const [groups, setGroups] = useState<ModifierGroupDto[]>([])
@@ -97,6 +100,18 @@ export function ProductsPage() {
   const [tab, setTab] = useState<'general' | 'bom'>('general')
   const [previewSize, setPreviewSize] = useState<string | null>(null)
   const [fields, setFields] = useState<Record<string, string>>({})
+  // preview of the automatic SKU for an empty field (the real code is assigned when saving)
+  const [nextSku, setNextSku] = useState<string | null>(null)
+  const skuEmpty = !!draft && !draft.sku.trim()
+  const skuCategory = draft?.categoryId || null
+  useEffect(() => {
+    if (!skuEmpty) return
+    let alive = true
+    call('catalog.nextSku', { categoryId: skuCategory }).then((v) => alive && setNextSku(v), () => {})
+    return () => {
+      alive = false
+    }
+  }, [skuEmpty, skuCategory])
   const [busy, setBusy] = useState(false)
   const editable = can('products:update')
 
@@ -188,7 +203,7 @@ export function ProductsPage() {
   }
 
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('catalog.deleteProduct', { id: draft.id })
       toast(t.crud.deleted)
@@ -285,7 +300,7 @@ export function ProductsPage() {
             <span className="text-[13px] text-muted-foreground">{t.crud.showing(rows.length, filtered.length)}</span>
             <Pagination page={filter.page} pageSize={PAGE} total={filtered.length} onPage={(page) => setFilter({ ...filter, page })} />
           </div>
-          <span className="text-xs text-muted-foreground">{pr.marginNote}</span>
+          {features.inventory && <span className="text-xs text-muted-foreground">{pr.marginNote}</span>}
         </Card>
 
         <aside className="box-border flex max-w-full min-w-0 flex-[1_1_560px] flex-col gap-3.5 rounded-[22px] bg-white p-[22px] shadow-[0_10px_30px_rgba(60,40,90,0.08)]">
@@ -300,7 +315,7 @@ export function ProductsPage() {
                   {draft.sku ? ` · ${draft.sku}` : ''}
                 </span>
               </div>
-              <Segmented label={pr.title} value={tab} onChange={setTab} options={[{ value: 'general', label: pr.tabGeneral }, { value: 'bom', label: pr.tabBom }]} />
+              {features.inventory && <Segmented label={pr.title} value={tab} onChange={setTab} options={[{ value: 'general', label: pr.tabGeneral }, { value: 'bom', label: pr.tabBom }]} />}
 
               {tab === 'general' && (
                 <>
@@ -309,7 +324,7 @@ export function ProductsPage() {
                   </Field>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label={pr.sku} error={fields['sku']}>
-                      <TextInput value={draft.sku} maxLength={40} disabled={!editable} onChange={(e) => upd({ sku: e.target.value })} />
+                      <TextInput value={draft.sku} maxLength={40} disabled={!editable} placeholder={nextSku ? pr.skuAuto(nextSku) : undefined} title={nextSku ? pr.skuAuto(nextSku) : undefined} onChange={(e) => upd({ sku: e.target.value })} />
                     </Field>
                     <Field label={pr.barcode}>
                       <TextInput value={draft.barcode} maxLength={40} disabled={!editable} onChange={(e) => upd({ barcode: e.target.value })} />
@@ -382,7 +397,7 @@ export function ProductsPage() {
                     )}
                   </div>
 
-                  {groups.length > 0 && (
+                  {features.modifiers && groups.length > 0 && (
                     <div className="flex flex-col gap-1">
                       <span className="text-sm font-bold">{pr.groups}</span>
                       {groups.map((g) => (
@@ -403,7 +418,7 @@ export function ProductsPage() {
                 </>
               )}
 
-              {tab === 'bom' && (
+              {features.inventory && tab === 'bom' && (
                 <>
                   {draft.sizes.length > 1 && (
                     <Segmented label={pr.previewSize} value={preview?.id ?? ''} onChange={setPreviewSize} options={draft.sizes.map((s) => ({ value: s.id, label: s.label || '—' }))} />

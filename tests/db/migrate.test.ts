@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { openDatabase, type Db } from '@main/db/connection'
 import { loadMigrations, migrate, MigrationError } from '@main/db/migrate'
-import { migrationsDir, tmpDir } from '../helpers/tmp'
+import { closeAfter, migrationsDir, tmpDir } from '../helpers/tmp'
 
 const M1 = 'CREATE TABLE a (id TEXT PRIMARY KEY) STRICT;'
 const M2 = 'CREATE TABLE b (id TEXT PRIMARY KEY) STRICT;'
@@ -13,7 +13,7 @@ function setup(files: Record<string, string>) {
   const dir = tmpDir()
   const dbPath = join(dir, 'kposs.sqlite')
   const backupDir = join(dir, 'backup')
-  const db = openDatabase(dbPath)
+  const db = closeAfter(openDatabase(dbPath))
   return { db, dbPath, backupDir, migrationsDir: migrationsDir(files) }
 }
 
@@ -79,7 +79,7 @@ describe('migrate', () => {
     expect(existsSync(r.backupPath!)).toBe(true)
     expect(r.backupPath!).toContain('pre-migrate-v1')
 
-    const backup = openDatabase(r.backupPath!)
+    const backup = closeAfter(openDatabase(r.backupPath!))
     expect(version(backup)).toBe(1)
     expect(backup.prepare('SELECT id FROM a').pluck().all()).toEqual(['keep-me'])
     backup.close()

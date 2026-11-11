@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { CouponDto, MemberDto, PointsRulesDto, PromotionDto, TierDto } from '@shared/api-promo'
+import type { CouponDto, PromotionDto } from '@shared/api-promo'
 import type { CategoryDto } from '@shared/api-sales'
 import { discountFor, type PromoRules, type PromoType } from '@shared/promotions'
 import { MoneyInput, Segmented } from '@renderer/components/modal'
-import { Card, Chip, DangerButton, Field, GradientButton, inputClass, OutlineButton, PageHeader, Pagination, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { Card, Chip, DangerButton, Field, GradientButton, OutlineButton, PageHeader, SelectInput, TextInput, Toggle, useToast } from '@renderer/components/ui'
+import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { formatDateTimeShort, money } from '@renderer/lib/format'
 import { dateToMs, msToDateInput, panelClass, rowClass } from '@renderer/lib/forms'
 import { useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
+import { MembersTab } from './members'
 
 const pr = t.promo
 
@@ -73,6 +75,7 @@ export function PromoPage() {
 function PromotionsTab() {
   const { can } = useSession()
   const toast = useToast()
+  const confirm = useConfirm()
   const [promos, setPromos] = useState<PromotionDto[]>([])
   const [cats, setCats] = useState<CategoryDto[]>([])
   const [draft, setDraft] = useState<PromoDraft | null>(null)
@@ -113,7 +116,7 @@ function PromotionsTab() {
   }
 
   async function remove() {
-    if (!draft?.id || !window.confirm(t.crud.confirmDelete(draft.name))) return
+    if (!draft?.id || !(await confirm({ kind: 'danger', title: t.confirmDialog.deleteTitle, message: t.crud.confirmDelete(draft.name), confirmLabel: t.confirmDialog.delete }))) return
     try {
       await call('promo.delete', { id: draft.id })
       setDraft(null)
@@ -265,169 +268,6 @@ function PromotionsTab() {
   )
 }
 
-function MembersTab() {
-  const { can } = useSession()
-  const toast = useToast()
-  const [q, setQ] = useState({ search: '', tierId: '', page: 1 })
-  const [list, setList] = useState<{ items: MemberDto[]; total: number }>({ items: [], total: 0 })
-  const [tiers, setTiers] = useState<TierDto[]>([])
-  const [sel, setSel] = useState<MemberDto | null>(null)
-  const [reason, setReason] = useState<string>(pr.adjustReasons[0])
-  const [rules, setRules] = useState<PointsRulesDto | null>(null)
-
-  const load = useCallback(
-    () =>
-      call('members.list', { page: q.page, ...(q.search ? { search: q.search } : {}), ...(q.tierId ? { tierId: q.tierId } : {}) }).then(
-        (r) => {
-          setList(r)
-          setSel((s) => (s ? (r.items.find((m) => m.id === s.id) ?? s) : s))
-        },
-        (err: unknown) => toast(errorMessage(err), 'error'),
-      ),
-    [q, toast],
-  )
-  useEffect(() => {
-    const h = setTimeout(() => void load(), q.search ? 250 : 0)
-    return () => clearTimeout(h)
-  }, [load, q.search])
-  useEffect(() => {
-    void call('members.tiers').then(setTiers, () => {})
-    void call('members.pointsRules').then(setRules, () => {})
-  }, [])
-
-  async function adjust(delta: number) {
-    if (!sel) return
-    try {
-      setSel(await call('members.adjustPoints', { id: sel.id, delta, reason }))
-      void load()
-    } catch (err) {
-      toast(errorMessage(err), 'error')
-    }
-  }
-
-  async function erase() {
-    if (!sel || !window.confirm(pr.eraseConfirm)) return
-    try {
-      await call('members.erase', { id: sel.id, reason: 'ลูกค้าขอลบข้อมูล (PDPA)' })
-      setSel(null)
-      void load()
-    } catch (err) {
-      toast(errorMessage(err), 'error')
-    }
-  }
-
-  async function saveRules() {
-    if (!rules) return
-    try {
-      setRules(await call('members.savePointsRules', rules))
-      toast(t.crud.saved)
-    } catch (err) {
-      toast(errorMessage(err), 'error')
-    }
-  }
-
-  return (
-    <div className="flex flex-wrap items-start gap-[18px]">
-      <Card className="flex min-w-0 flex-[1.3_1_480px] flex-col gap-3">
-        <div className="flex flex-wrap gap-2.5">
-          <TextInput type="search" placeholder={pr.memberSearch} aria-label={pr.memberSearch} className="flex-[2_1_200px]" value={q.search} onChange={(e) => setQ({ ...q, search: e.target.value, page: 1 })} />
-          <SelectInput aria-label={pr.allTiers} className="flex-[1_1_120px]" value={q.tierId} onChange={(e) => setQ({ ...q, tierId: e.target.value, page: 1 })}>
-            <option value="">{pr.allTiers}</option>
-            {tiers.map((tr) => (
-              <option key={tr.id} value={tr.id}>
-                {tr.name}
-              </option>
-            ))}
-          </SelectInput>
-        </div>
-        <div className="flex items-center gap-3 px-3 text-xs font-bold text-[#7A8090]">
-          <span className="flex-[2_1_0]">{t.pos.memberTitle}</span>
-          <span className="flex-[1_1_0]">{pr.tier}</span>
-          <span className="flex-[1_1_0] text-right">{pr.points}</span>
-          <span className="flex-[1_1_0] text-right">{pr.lifetime}</span>
-        </div>
-        {list.items.map((m) => (
-          <div key={m.id} role="listitem" className={rowClass(m.id === sel?.id)} onClick={() => setSel(m)}>
-            <div className="flex min-w-0 flex-[2_1_0] flex-col">
-              <span className="text-[15px] font-semibold">{m.name ?? m.phoneMasked}</span>
-              <span className="text-xs text-muted-foreground">{m.phoneMasked}</span>
-            </div>
-            <span className="flex-[1_1_0]">
-              <Chip>{m.tierName ?? '—'}</Chip>
-            </span>
-            <span className="flex-[1_1_0] text-right font-semibold">{m.pointsBalance.toLocaleString('en-US')}</span>
-            <span className="flex-[1_1_0] text-right text-muted-foreground">{m.lifetimePoints.toLocaleString('en-US')}</span>
-          </div>
-        ))}
-        {list.items.length === 0 && <span className="text-sm text-muted-foreground">{t.crud.empty}</span>}
-        <Pagination page={q.page} pageSize={7} total={list.total} onPage={(page) => setQ({ ...q, page })} />
-        <span className="text-xs text-muted-foreground">{pr.pdpa}</span>
-      </Card>
-
-      <div className="flex min-w-0 flex-[1_1_360px] flex-col gap-[18px]">
-        {sel && (
-          <aside className={panelClass}>
-            <div className="flex flex-col">
-              <span className="text-lg font-bold">{sel.name ?? sel.phoneMasked}</span>
-              <span className="text-[13px] text-muted-foreground">
-                {sel.phoneMasked} · {pr.memberSince(formatDateTimeShort(sel.createdAt).slice(0, 8))}
-              </span>
-            </div>
-            <div className="flex flex-col gap-0.5 rounded-2xl bg-[#F7F5F2] px-4 py-3">
-              <span className="text-[13px] text-muted-foreground">{pr.balance}</span>
-              <span className="text-[28px] font-bold text-accent-foreground">{sel.pointsBalance.toLocaleString('en-US')}</span>
-            </div>
-            {can('promo:update') && (
-              <>
-                <span className="text-sm font-bold">{pr.adjust}</span>
-                <SelectInput value={reason} onChange={(e) => setReason(e.target.value)}>
-                  {pr.adjustReasons.map((x) => (
-                    <option key={x} value={x}>
-                      {x}
-                    </option>
-                  ))}
-                </SelectInput>
-                <div className="flex gap-2">
-                  <OutlineButton className="min-h-12 flex-1" onClick={() => void adjust(-10)}>
-                    −10
-                  </OutlineButton>
-                  <OutlineButton className="min-h-12 flex-1" onClick={() => void adjust(10)}>
-                    +10
-                  </OutlineButton>
-                </div>
-                <span className="text-xs text-muted-foreground">{pr.adjustNote}</span>
-              </>
-            )}
-            {can('promo:delete') && (
-              <DangerButton className="min-h-12" onClick={() => void erase()}>
-                {pr.erase}
-              </DangerButton>
-            )}
-          </aside>
-        )}
-        {rules && (
-          <aside className={panelClass}>
-            <h2 className="m-0 text-base font-bold">{pr.rules}</h2>
-            <Field label={pr.earnEvery}>
-              <MoneyInput value={rules.earnEverySatang} onChange={(v) => v && setRules({ ...rules, earnEverySatang: v })} ariaLabel={pr.earnEvery} />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label={pr.redeemPoints}>
-                <input className={inputClass} inputMode="numeric" value={rules.redeemPoints} onChange={(e) => setRules({ ...rules, redeemPoints: Number(e.target.value.replace(/\D/g, '')) || 1 })} />
-              </Field>
-              <Field label={pr.redeemValue}>
-                <MoneyInput value={rules.redeemValueSatang} onChange={(v) => v && setRules({ ...rules, redeemValueSatang: v })} ariaLabel={pr.redeemValue} />
-              </Field>
-            </div>
-            {can('promo:update') && <GradientButton onClick={() => void saveRules()}>{pr.saveRules}</GradientButton>}
-          </aside>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/** Coupons (no prototype yet — follows the Promo page style). */
 export function CouponsPage() {
   const { can } = useSession()
   const toast = useToast()

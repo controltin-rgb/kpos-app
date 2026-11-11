@@ -45,3 +45,25 @@ export const rowClass = (selected: boolean, dim = false) =>
   cn('box-border flex min-h-[60px] cursor-pointer items-center gap-3 rounded-2xl border-2 px-3 py-1.5', selected ? 'border-[#9776F6] bg-[#F5F2FE]' : 'border-transparent bg-[#F7F5F2]', dim && 'opacity-60')
 
 export const panelClass = 'box-border flex max-w-full flex-col gap-3.5 rounded-[22px] bg-white p-[22px] shadow-[0_10px_30px_rgba(60,40,90,0.08)]'
+
+/** "2026-11" → Bangkok month [from, to). */
+export function monthRange(key: string): { from: number; to: number } {
+  const [y, m] = key.split('-').map(Number) as [number, number]
+  return { from: Date.UTC(y, m - 1, 1) - 7 * 3_600_000, to: Date.UTC(y, m, 1) - 7 * 3_600_000 }
+}
+
+const monthLabel = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', { month: 'long', year: 'numeric', timeZone: 'Asia/Bangkok' })
+
+/** The current Bangkok month and the `count - 1` before it, newest first: { key: "2026-11", label: "พฤศจิกายน 2569" }. */
+export function recentMonths(now: number, count = 24): { key: string; label: string }[] {
+  const d = new Date(now + 7 * 3_600_000)
+  const out: { key: string; label: string }[] = []
+  for (let i = 0; i < count; i++) {
+    const at = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - i, 15)
+    const x = new Date(at)
+    out.push({ key: `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, '0')}`, label: monthLabel.format(at) })
+  }
+  return out
+}
+
+export const currentMonthKey = (now: number) => recentMonths(now, 1)[0]!.key

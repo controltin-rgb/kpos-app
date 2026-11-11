@@ -60,12 +60,18 @@ function computeHash(row: Omit<AuditRow, 'hash'>): string {
  */
 export class AuditService {
   private readonly repo: AuditRepo
+  /** device of the current call (this machine or a LAN Client) when an entry does not name one */
+  private deviceProvider: (() => string | null) | null = null
 
   constructor(
     db: Db,
     private readonly now: () => number = Date.now,
   ) {
     this.repo = new AuditRepo(db)
+  }
+
+  setDeviceProvider(fn: () => string | null): void {
+    this.deviceProvider = fn
   }
 
   append(e: AuditEntry): { id: string; seq: number; prevHash: string; hash: string } {
@@ -75,7 +81,7 @@ export class AuditService {
       seq: (last?.seq ?? 0) + 1,
       branch_id: e.branchId ?? null,
       user_id: e.userId ?? null,
-      device_id: e.deviceId ?? null,
+      device_id: e.deviceId ?? this.deviceProvider?.() ?? null,
       permission: e.permission ?? null,
       action: e.action,
       entity: e.entity ?? null,

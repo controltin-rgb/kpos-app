@@ -44,6 +44,8 @@ export interface RouterDeps {
   resolveActor: (token: string) => Promise<Actor | null>
   audit: AuditService
   log?: (msg: string, err: unknown) => void
+  /** extra refusal after authentication/permission (e.g. license read-only mode, D26) */
+  gate?: (channel: Channel) => ErrorPayload | null
 }
 
 /**
@@ -85,6 +87,9 @@ export function createRouter(deps: RouterDeps) {
           return fail({ code: 'FORBIDDEN', data: { permission: endpoint.access } })
         }
       }
+
+      const refused = deps.gate?.(ch)
+      if (refused) return fail(refused)
 
       const parsed = (endpoint.input as z.ZodType).safeParse(rawInput)
       if (!parsed.success) {

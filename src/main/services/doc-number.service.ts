@@ -33,6 +33,26 @@ export class DocNumberService {
     return current
   }
 
+  /**
+   * Reserves `count` consecutive numbers (a Client's offline bill block, D27) and returns the first.
+   * Must run inside the caller's transaction.
+   */
+  reserve(branchId: string, docType: string, count: number, now: number, prefix = ''): number {
+    if (!this.db.inTransaction) throw new Error('DocNumberService.reserve must run inside a transaction')
+    const current = this.getStmt.get(branchId, docType) as number | undefined
+    if (current === undefined) {
+      this.db.prepare('INSERT INTO doc_sequences (branch_id, doc_type, prefix, next_no, updated_at) VALUES (?, ?, ?, ?, ?)').run(branchId, docType, prefix, count + 1, now)
+      return 1
+    }
+    this.db.prepare('UPDATE doc_sequences SET next_no = next_no + ?, updated_at = ? WHERE branch_id = ? AND doc_type = ?').run(count, now, branchId, docType)
+    return current
+  }
+
+  /** doc_sequences key of the bill counter for a numbering period ('' = never resets). */
+  billDocType(period: string): string {
+    return period ? `bill:${period}` : 'bill'
+  }
+
   branchCode(branchId: string): string {
     return (this.branchCodeStmt.get(branchId) as string | undefined) ?? 'A'
   }
@@ -41,7 +61,7 @@ export class DocNumberService {
   nextBillNo(branchId: string, policy: BillResetPolicy, now: number): string {
     const period = periodKey(policy, now)
     const prefix = this.branchCode(branchId)
-    const seq = this.next(branchId, period ? `bill:${period}` : 'bill', now, prefix)
+    const seq = this.next(branchId, this.billDocType(period), now, prefix)
     return formatBillNo(prefix, policy, period, seq)
   }
 
