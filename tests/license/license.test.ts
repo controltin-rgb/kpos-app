@@ -123,7 +123,7 @@ describe('license service', () => {
     ])
   })
 
-  it('a file issued before the installed one is refused (no going back to an old, bigger package); the same file may be re-installed', async () => {
+  it('a file issued before the installed one is refused (no going back to an old, bigger package); picking the installed file again is reported', async () => {
     const t = await app()
     const oldSystem = signLicense(payload({ licenseId: 'old-system', plan: 'System', issuedAt: T0 - 10 * DAY_MS, expiresAt: null }), K.priv)
     const newStandard = signLicense(payload({ licenseId: 'new-standard', plan: 'Standard', issuedAt: T0 - DAY_MS, expiresAt: null, features: resolveFeatures({ maxEmployees: 3, maxClients: 0, cloudBackup: false, kds: false }) }), K.priv)
@@ -132,7 +132,7 @@ describe('license service', () => {
     expect(await t.call(1, 'license.status')).toMatchObject({ plan: 'Standard', features: { kds: false } })
     await t.fails('LICENSE_OUTDATED', 1, 'license.import', { content: oldSystem })
     expect(await t.call(1, 'license.status')).toMatchObject({ plan: 'Standard' })
-    await t.call(1, 'license.import', { content: newStandard }) // re-installing the current file is fine
+    await t.fails('LICENSE_ALREADY_INSTALLED', 1, 'license.import', { content: newStandard }) // picking the installed file again is reported
     const later = signLicense(payload({ licenseId: 'later-pro', plan: 'Pro', issuedAt: T0, expiresAt: null }), K.priv)
     await t.call(1, 'license.import', { content: later })
     expect(await t.call(1, 'license.status')).toMatchObject({ plan: 'Pro' })

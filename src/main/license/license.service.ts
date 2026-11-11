@@ -166,7 +166,7 @@ export class LicenseService {
   /**
    * Installs a .LIC (license:manage). Rejects bad signatures, other machines' files, dead licenses and files
    * issued before one already installed here — so an old, bigger package cannot be put back after a downgrade.
-   * Re-installing the same file is allowed.
+   * Picking the file that is already installed is reported (LICENSE_ALREADY_INSTALLED) instead of a silent "done".
    */
   install(actor: Actor, raw: string): LicenseStatusDto {
     const parsed = this.verify(raw)
@@ -174,6 +174,8 @@ export class LicenseService {
     const p = parsed.payload
     const { at } = this.effectiveNow()
     if (evaluateLicense(at, null, p).state === 'expired') throw new AppError('LICENSE_INVALID', { reason: 'expired' })
+    const current = this.db.prepare('SELECT license_id FROM licenses WHERE replaced_at IS NULL').pluck().get() as string | undefined
+    if (current === p.licenseId && this.status().licenseId === p.licenseId) throw new AppError('LICENSE_ALREADY_INSTALLED', { plan: p.plan })
     const newest = this.db.prepare('SELECT max(issued_at) FROM licenses').pluck().get() as number | null
     if (newest !== null && p.issuedAt < newest) throw new AppError('LICENSE_OUTDATED', { issuedAt: p.issuedAt, installedIssuedAt: newest })
 

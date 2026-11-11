@@ -52,7 +52,7 @@ export function LicenseSection() {
       const next = await call('license.import', {})
       if (next) {
         setS(next)
-        toast(l.installed)
+        toast(next.plan ? l.installedPlan(next.plan) : l.installed)
         window.dispatchEvent(new Event('kposs:license-changed'))
       }
     } catch (err) {

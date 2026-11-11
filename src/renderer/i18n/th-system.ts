@@ -150,6 +150,7 @@ export const thSystem = {
     copyHw: 'คัดลอก Hardware ID ส่งผู้ขาย',
     copied: 'คัดลอก Hardware ID แล้ว',
     installed: 'ติดตั้ง License แล้ว',
+    installedPlan: (plan: string) => `ติดตั้ง License แล้ว · แพ็กเกจ ${plan}`,
     noPermission: 'เฉพาะผู้ดูแลระบบสูงสุดเท่านั้นที่ติดตั้ง License ได้',
     note: 'License ลงลายเซ็น Ed25519 และผูกกับ Hardware ID ตรวจสอบได้โดยไม่ต้องออนไลน์ เมื่อใกล้หมดอายุระบบแจ้งเตือนล่วงหน้า',
     installedBy: (who: string, when: string) => `ติดตั้งโดย ${who} · ${when}`,

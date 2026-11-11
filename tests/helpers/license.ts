@@ -12,11 +12,13 @@ export const TEST_LICENSE_KEYS = {
 }
 export const TEST_HW = 'HW-7E57-0000-0000-0001'
 
+let seq = 0
+/** each file gets its own license id (installing the same file twice is refused) unless the test sets one */
 export function testLicense(over: Partial<Omit<LicensePayload, 'features'>> & { features?: Partial<LicenseFeatures> } = {}): string {
   const { features, ...rest } = over
   return signLicense(
     {
-      licenseId: 'test-license',
+      licenseId: `test-license-${++seq}`,
       licensee: 'KPOSS Cafe',
       plan: 'Test',
       hardwareId: TEST_HW,

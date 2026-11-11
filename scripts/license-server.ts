@@ -140,7 +140,7 @@ export async function createLicenseServer(options: LicenseServerOptions = {}): P
       const id = decodeURIComponent(url.pathname.slice('/api/file/'.length))
       const e = readRegister(registerPath).find((x) => x.licenseId === id)
       if (!e) return send(res, 404, 'not found', 'text/plain')
-      return send(res, 200, e.file, 'application/octet-stream', { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileNameFor(e.licensee, e.hardwareId))}` })
+      return send(res, 200, e.file, 'application/octet-stream', { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fileNameFor(e.licensee, e.hardwareId, e.plan, e.issuedAt))}` })
     }
     if (req.method === 'GET' && url.pathname.startsWith('/api/customers/')) {
       const id = decodeURIComponent(url.pathname.slice('/api/customers/'.length))

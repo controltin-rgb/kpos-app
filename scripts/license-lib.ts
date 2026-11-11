@@ -51,9 +51,15 @@ export function expiryOf(term: Term, now: number): number | null {
   return end
 }
 
-export function fileNameFor(licensee: string, hardwareId: string): string {
+/**
+ * <licensee>-<plan>-<HW>-<issued yyyymmdd-hhmm, Bangkok>.LIC — every issued file has its own name, so a renewal or a
+ * package change never lands next to an older file of the same name (and the shop picks the right one).
+ */
+export function fileNameFor(licensee: string, hardwareId: string, plan = '', issuedAt?: number): string {
   // \p{M}: keep Thai vowel / tone marks (ร้าน, not ร_าน)
-  return `${licensee.replace(/[^\p{L}\p{M}\p{N}_-]+/gu, '_')}-${hardwareId}.LIC`
+  const safe = (v: string) => v.replace(/[^\p{L}\p{M}\p{N}_-]+/gu, '_').replace(/^_+|_+$/g, '')
+  const issued = issuedAt === undefined ? '' : new Date(issuedAt + 7 * 3_600_000).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-')
+  return [safe(licensee), safe(plan), hardwareId, issued].filter(Boolean).join('-') + '.LIC'
 }
 
 export interface StoreOpts {
@@ -98,7 +104,7 @@ export function issue(input: IssueInput, opts: StoreOpts = {}): { content: strin
   // the signed file must verify with the keys built into the app (catches a key / build mismatch)
   const check = parseLicense(content, opts.trustedKeys ?? LICENSE_PUBLIC_KEYS, hardwareId)
   if (!check.ok) throw new IssueError(`the signing key does not match the app's public key (${check.problem}) — run pnpm license:keygen or update public-key.ts`)
-  const fileName = fileNameFor(payload.licensee, hardwareId)
+  const fileName = fileNameFor(payload.licensee, hardwareId, payload.plan, payload.issuedAt)
   const register = registerOf(opts)
   // older licenses of the same machine that are still in force are replaced by this one
   const older = licenseRows(opts, now).filter((r) => r.hardwareId === hardwareId && r.status !== 'void' && r.status !== 'superseded')

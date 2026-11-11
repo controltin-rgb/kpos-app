@@ -61,7 +61,7 @@ describe('License Manager server', () => {
     const { call } = await start()
     const customer = (await (await call('/api/customers', { name: 'ร้านกาแฟ', phone: '081' })).json()) as { id: string }
     const issued = (await (await call('/api/issue', { hardwareId: HW, licensee: 'ร้านกาแฟ', plan: 'Plus', term: { kind: 'days', days: 40 }, maxEmployees: 20, maxClients: 2, cloudBackup: false, customerId: customer.id })).json()) as { payload: { licenseId: string }; content: string; fileName: string }
-    expect(issued.fileName).toBe(`ร้านกาแฟ-${HW}.LIC`)
+    expect(issued.fileName).toMatch(new RegExp(`^ร้านกาแฟ-Plus-${HW}-\\d{8}-\\d{4}\\.LIC$`)) // licensee-plan-HW-issued, unique per file
 
     const preview = (await (await call('/api/renew-preview', { licenseId: issued.payload.licenseId, days: 365, mode: 'from_expiry' })).json()) as { term: { kind: string }; expiresAt: number; previousExpiresAt: number }
     expect(preview.term.kind).toBe('until')
