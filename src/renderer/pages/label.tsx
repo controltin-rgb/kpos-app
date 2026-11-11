@@ -3,7 +3,7 @@ import QRCode from 'qrcode'
 import type { ExpiringLotDto } from '@shared/api-stock'
 import type { CategoryDto, ModifierGroupDto, ProductDto } from '@shared/api-sales'
 import type { CouponDto, PromotionDto } from '@shared/api-promo'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { useToast } from '@renderer/components/ui'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
@@ -115,7 +115,9 @@ const DEFAULT_FILTERS = { q: '', cat: 'all', status: 'all' as 'all' | 'active' |
 export function LabelPage() {
   const toast = useToast()
   const { can } = useSession()
-  const canCoupons = can('promo:view')
+  const features = useFeatures()
+  const canCoupons = can('promo:view') && features.promotions
+  const canExpiry = features.inventory // expiry labels read stock lots
   const [coupons, setCoupons] = useState<CouponDto[]>([])
   const [promos, setPromos] = useState<PromotionDto[]>([])
   const [products, setProducts] = useState<ProductDto[]>([])
@@ -131,12 +133,12 @@ export function LabelPage() {
     void call('catalog.products').then(setProducts, fail)
     void call('catalog.categories').then(setCats, fail)
     void call('catalog.groups').then(setGroups, fail)
-    void call('waste.expiring', { withinDays: 60 }).then(setLots, fail)
+    if (canExpiry) void call('waste.expiring', { withinDays: 60 }).then(setLots, fail)
     if (canCoupons) {
       void call('coupons.list').then(setCoupons, fail)
       void call('promo.list').then(setPromos, fail)
     }
-  }, [toast, canCoupons])
+  }, [toast, canCoupons, canExpiry])
 
   const options = useMemo(() => groups.flatMap((g) => g.options.map((o) => ({ id: o.id, name: o.name, groupId: g.id, group: g.name }))), [groups])
   const sizeNames = useMemo(() => [...new Set(products.flatMap((p) => p.sizes.map((z) => z.label)))], [products])
@@ -347,7 +349,7 @@ export function LabelPage() {
             {L.kind}
             <select className={inCls} value={s.kind} onChange={(e) => set({ page: 0, kind: e.target.value as Kind, cat: 'all', ...(e.target.value === 'coupon' ? { size: SIZES.length - 1 } : {}) })}>
               {(Object.keys(L.kinds) as Kind[])
-                .filter((k) => k !== 'coupon' || canCoupons)
+                .filter((k) => (k !== 'coupon' || canCoupons) && (k !== 'exp' || canExpiry))
                 .map((k) => (
                   <option key={k} value={k}>
                     {L.kinds[k]}

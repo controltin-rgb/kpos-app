@@ -7,6 +7,7 @@ import { dashboardApi } from './api-dashboard'
 import { stockApi } from './api-stock'
 import { aboutApi, licenseApi, opsApi, systemApi } from './api-system'
 import { lanApi } from './api-lan'
+import type { LicenseFeatures } from './license'
 import type { Permission } from './permissions'
 import type { UpdateStatusDto } from './api-system'
 
@@ -99,6 +100,8 @@ export interface SystemInfo {
   platform: string
   /** settings: sales.delivery_enabled (menus and POS hide delivery when off) */
   deliveryEnabled: boolean
+  /** what the license grants (D51) — menus and pages hide what is off */
+  features: LicenseFeatures
 }
 
 export interface SetupStatus {

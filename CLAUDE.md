@@ -63,14 +63,14 @@ pnpm build:dist   # เหมือน build แต่สร้างตัว�
 pnpm smoke release/win-unpacked/KPOSS.exe --relaunch   # เปิดแอปที่แพ็กแล้วบนข้อมูลว่าง ตรวจแล้วปิดเอง (--smoke-test)
 pnpm icon         # สร้าง resources/icon.png จาก resources/icon.svg
 pnpm theme:dark   # สร้าง src/renderer/styles/dark.css ใหม่ (ตารางสีโหมดมืดอยู่ใน scripts/gen-dark-css.mjs)
-pnpm license:tool # (ผู้ขาย) หน้าเว็บออก License/ทะเบียน — คีย์ลับ+ทะเบียนอยู่ที่ ~/.kposs/ เท่านั้น
+pnpm license:tool # (ผู้ขาย/dev เท่านั้น ไม่รวมในตัวติดตั้ง) License Manager: หน้าเว็บ React ที่ tools/license-manager — ลูกค้า/ออก/ต่ออายุ/ยกเลิก/ตรวจ .LIC/จัดการคีย์ · คีย์ลับ+ทะเบียน+ลูกค้า+แพ็กเกจอยู่ที่ ~/.kposs/ เท่านั้น
 pnpm test         # vitest — รันภายใต้ Node ของ Electron (ELECTRON_RUN_AS_NODE=1) ให้ native module ตรงกับตอนใช้งานจริง
 pnpm migrate      # รัน migration กับ DB ตัวอย่าง .data/dev.sqlite (แอปรันเองอัตโนมัติตอนเปิด)
 pnpm seed -- --reset  # สร้างข้อมูลตัวอย่าง (ร้าน/เมนู/สต็อก/ขาย 8 วัน) ที่ .data/userdata แล้วรันด้วย KPOSS_USER_DATA=.data/userdata pnpm dev
 pnpm lint && pnpm typecheck   # typecheck ตรวจ tsconfig.node.json และ tsconfig.web.json แยกกัน
 KPOSS_USER_DATA=/tmp/x pnpm dev  # (dev เท่านั้น) ใช้โฟลเดอร์ข้อมูลแยก เช่น ทดสอบหน้าตั้งค่าครั้งแรก · ค่าเริ่มต้นของ dev คือ %APPDATA%/KPOSS-dev (แยกจากแอปที่ติดตั้งซึ่งใช้ %APPDATA%/KPOSS)
 ```
-- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D49 ผู้ใช้ยืนยันแล้วทั้งหมด — ณ 2026-11-08) อ่านก่อนเริ่มงาน
+- การตัดสินใจอยู่ใน `docs/decisions.md` (D1–D51 ผู้ใช้ยืนยันแล้วทั้งหมด — ณ 2026-11-10) อ่านก่อนเริ่มงาน
 - IPC: ทุก endpoint ประกาศใน `src/shared/api.ts` (access + zod input) → handler ใน `src/main/app-context.ts` → service → repo; ทดสอบผ่าน `createTestApp()` ใน `tests/helpers/app.ts`
 - TypeScript ปักไว้ที่ 6.0.x เพราะ typescript-eslint ยังไม่รองรับ TS 7
 - ถ้า `pnpm dev` ขึ้น error `does not provide an export named 'BrowserWindow'` แปลว่า shell มี `ELECTRON_RUN_AS_NODE=1` ค้างอยู่ ให้ `unset ELECTRON_RUN_AS_NODE`

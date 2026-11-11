@@ -389,8 +389,9 @@ app.whenReady().then(async () => {
   }
   settingsForUpdate = ctx.settings
   forwardEvents(updateEvents)
-  if (ctx.settings.get('update.auto_check')) setTimeout(() => void updater.check(), 20_000)
-  setInterval(() => ctx.settings.get('update.auto_check') && void updater.check(), 6 * 3_600_000).unref()
+  const autoUpdateOn = () => ctx.settings.get('update.auto_check') && ctx.license.status().features.autoUpdate
+  if (autoUpdateOn()) setTimeout(() => void updater.check(), 20_000)
+  setInterval(() => autoUpdateOn() && void updater.check(), 6 * 3_600_000).unref()
   // D43: encrypted cloud copy every few minutes (only when switched on, licensed and configured)
   const cloudTick = () => void ctx.cloudSync(false).catch((err: unknown) => console.error('[cloud] sync failed:', err instanceof Error ? err.message : err))
   setInterval(cloudTick, CLOUD_SYNC_INTERVAL_MIN * 60_000).unref()

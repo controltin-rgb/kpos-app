@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { SessionUser, SetupStatus, SystemInfo } from '@shared/api'
+import { FULL_FEATURES, type LicenseFeatures } from '@shared/license'
 import { hasPermission, type Permission } from '@shared/permissions'
 import { ApiError, call, onUnauthenticated } from './api'
 
@@ -68,10 +69,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const offEvents = window.kposs.onEvent((e) => {
       if (e.type === 'lan.state' && e.connected) reload()
     })
+    // a newly installed license changes the features (D51): menus and pages follow at once, no restart needed
+    const onLicense = () => void call('system.info').then((sys) => alive && setSystem(sys), () => undefined)
+    window.addEventListener('kposs:license-changed', onLicense)
     return () => {
       alive = false
       off()
       offEvents()
+      window.removeEventListener('kposs:license-changed', onLicense)
     }
   }, [apply, fail])
 
@@ -103,4 +108,9 @@ export function useSession(): SessionState {
   const ctx = useContext(SessionContext)
   if (!ctx) throw new Error('useSession outside SessionProvider')
   return ctx
+}
+
+/** What the license grants (D51). Until the system info is loaded everything reads as on, so nothing flashes away. */
+export function useFeatures(): LicenseFeatures {
+  return useSession().system?.features ?? FULL_FEATURES
 }

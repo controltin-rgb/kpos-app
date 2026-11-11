@@ -94,6 +94,7 @@ export class ExpenseService {
     this.db.transaction(() => {
       let shiftId: string | null = null
       if (input.source === 'drawer') {
+        if (!this.shifts.drawerEnabled()) throw new AppError('FEATURE_NOT_LICENSED', { feature: 'drawerShift' })
         const shift = this.shifts.requireOpen()
         if (this.shifts.expected(shift.id) < input.amountSatang) throw new AppError('PAYMENT_INVALID', { reason: 'drawer_insufficient' })
         shiftId = shift.id

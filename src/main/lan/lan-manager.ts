@@ -75,7 +75,15 @@ export class LanManager {
 
   /** At startup: listen if this machine is a Host. Never throws (the error shows on the Settings page). */
   async startIfHost(): Promise<void> {
-    if (this.role === 'host') await this.listen().catch(() => undefined)
+    if (this.role === 'host') {
+      // the license no longer lets this machine be a Host (D51): fall back to a single machine
+      if (this.deps.license.status().features.maxClients === 0) {
+        this.deps.device.local.role = 'standalone'
+        this.opts.saveRole?.('standalone')
+        return
+      }
+      await this.listen().catch(() => undefined)
+    }
   }
 
   private async listen(): Promise<void> {
@@ -130,6 +138,7 @@ export class LanManager {
   /** Standalone ⇄ Host. Audited (high): it opens or closes the shop's LAN API. */
   async setMode(actor: Actor, mode: 'standalone' | 'host', port?: number): Promise<LanStatusDto> {
     if (this.role === 'client') throw new AppError('LAN_NOT_AVAILABLE')
+    if (mode === 'host' && this.deps.license.status().features.maxClients === 0) throw new AppError('FEATURE_NOT_LICENSED', { feature: 'host' })
     const before = { role: this.role, port: this.deps.settings.get('lan.port') }
     if (port !== undefined && port !== before.port) {
       await this.server?.stop()

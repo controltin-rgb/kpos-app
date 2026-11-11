@@ -8,7 +8,7 @@ import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage, fieldErrors } from '@renderer/lib/api'
 import { money, qty } from '@renderer/lib/format'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 
 const pr = t.products
@@ -88,6 +88,7 @@ function toDraft(p: ProductDto): Draft {
 /** docs/design/Products.dc.html (draft): products, sizes with multipliers, BOM with size modes. */
 export function ProductsPage() {
   const { can } = useSession()
+  const features = useFeatures() // license: no recipe/cost tab without inventory, no option groups without modifiers (D51)
   const toast = useToast()
   const confirm = useConfirm()
   const [products, setProducts] = useState<ProductDto[]>([])
@@ -299,7 +300,7 @@ export function ProductsPage() {
             <span className="text-[13px] text-muted-foreground">{t.crud.showing(rows.length, filtered.length)}</span>
             <Pagination page={filter.page} pageSize={PAGE} total={filtered.length} onPage={(page) => setFilter({ ...filter, page })} />
           </div>
-          <span className="text-xs text-muted-foreground">{pr.marginNote}</span>
+          {features.inventory && <span className="text-xs text-muted-foreground">{pr.marginNote}</span>}
         </Card>
 
         <aside className="box-border flex max-w-full min-w-0 flex-[1_1_560px] flex-col gap-3.5 rounded-[22px] bg-white p-[22px] shadow-[0_10px_30px_rgba(60,40,90,0.08)]">
@@ -314,7 +315,7 @@ export function ProductsPage() {
                   {draft.sku ? ` · ${draft.sku}` : ''}
                 </span>
               </div>
-              <Segmented label={pr.title} value={tab} onChange={setTab} options={[{ value: 'general', label: pr.tabGeneral }, { value: 'bom', label: pr.tabBom }]} />
+              {features.inventory && <Segmented label={pr.title} value={tab} onChange={setTab} options={[{ value: 'general', label: pr.tabGeneral }, { value: 'bom', label: pr.tabBom }]} />}
 
               {tab === 'general' && (
                 <>
@@ -396,7 +397,7 @@ export function ProductsPage() {
                     )}
                   </div>
 
-                  {groups.length > 0 && (
+                  {features.modifiers && groups.length > 0 && (
                     <div className="flex flex-col gap-1">
                       <span className="text-sm font-bold">{pr.groups}</span>
                       {groups.map((g) => (
@@ -417,7 +418,7 @@ export function ProductsPage() {
                 </>
               )}
 
-              {tab === 'bom' && (
+              {features.inventory && tab === 'bom' && (
                 <>
                   {draft.sizes.length > 1 && (
                     <Segmented label={pr.previewSize} value={preview?.id ?? ''} onChange={setPreviewSize} options={draft.sizes.map((s) => ({ value: s.id, label: s.label || '—' }))} />

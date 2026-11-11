@@ -14,6 +14,7 @@ import { ClientSync } from '@main/sync/client-sync'
 import { isOfflineError, OfflineSupport } from '@main/sync/offline-support'
 import type { UpdaterPort } from '@main/updater'
 import type { UpdateStatusDto } from '@shared/api-system'
+import { featureForChannel, type LicenseFeatures } from '@shared/license'
 
 export interface ClientContextOptions {
   conn: HostConnection
@@ -133,9 +134,15 @@ export function createClientContext(opts: ClientContextOptions) {
     }
   }
 
+  /** last license features the Host reported (system.info); null until known → nothing is refused */
+  let hostFeatures: LicenseFeatures | null = null
+
   async function dispatch(sender: number, channel: string, input: unknown): Promise<Envelope<unknown>> {
     try {
       if (NOT_ON_CLIENT.has(channel)) return fail('LAN_NOT_AVAILABLE')
+      // channels answered here never reach the Host's gate, so the Host's license features are checked here (D51)
+      const needed = featureForChannel(channel) ?? (channel === 'pos.openWindow' ? ((input as { kind?: unknown } | null)?.kind === 'cfd' ? 'cfd' : (input as { kind?: unknown } | null)?.kind === 'kds' ? 'kds' : null) : null)
+      if (needed && hostFeatures && !hostFeatures[needed]) return { ok: false, error: { code: 'FEATURE_NOT_LICENSED', data: { feature: needed } } }
       switch (channel) {
         case 'pos.openWindow': {
           const kind = (input as { kind?: unknown } | null)?.kind
@@ -174,6 +181,7 @@ export function createClientContext(opts: ClientContextOptions) {
           const host = knownDown ? fail('LAN_UNREACHABLE') : await forward(sender, channel, input)
           const v = opts.versions ?? { app: '', electron: '', node: process.versions.node, chrome: '', platform: process.platform }
           const base = host.ok ? (host.data as Record<string, unknown>) : { sqlite: '', schemaVersion: 0 }
+          if (host.ok && (base as { features?: LicenseFeatures }).features) hostFeatures = (base as { features: LicenseFeatures }).features
           return {
             ok: true,
             data: { ...base, deviceRole: 'client', deviceName: opts.device.name, hostName: conn.cfg.hostName, hostConnected: host.ok, offlinePending: opts.store?.counts().pending ?? null, appVersion: v.app, electron: v.electron, node: v.node, chrome: v.chrome, platform: v.platform },

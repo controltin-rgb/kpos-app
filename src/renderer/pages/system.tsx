@@ -9,7 +9,7 @@ import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useAppEvent } from '@renderer/lib/events'
 import { formatDateTimeShort } from '@renderer/lib/format'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 
 const a = t.about
@@ -25,6 +25,7 @@ const STATUS_CHIP: Record<RoadmapStatus, { bg: string; fg: string }> = {
 
 export function AboutPage() {
   const { system, can } = useSession()
+  const features = useFeatures()
   const toast = useToast()
   const [about, setAbout] = useState<AboutDto | null>(null)
   const [editing, setEditing] = useState(false)
@@ -116,7 +117,7 @@ export function AboutPage() {
             </div>
           </Card>
 
-          <UpdateCard />
+          {features.autoUpdate && <UpdateCard />}
 
           <Card className="flex flex-col gap-3">
             <h2 className="m-0 text-lg font-bold">{a.machine}</h2>
@@ -130,12 +131,12 @@ export function AboutPage() {
             </dl>
           </Card>
 
-          {can('pos:view') && (
+          {can('pos:view') && (features.cfd || features.kds) && (
             <Card className="flex flex-col gap-3 lg:col-span-2">
               <strong>{t.windows.title}</strong>
               <div className="flex flex-wrap gap-2.5">
-                <OutlineButton onClick={() => void open('cfd')}>{t.windows.openCfd}</OutlineButton>
-                <OutlineButton onClick={() => void open('kds')}>{t.windows.openKds}</OutlineButton>
+                {features.cfd && <OutlineButton onClick={() => void open('cfd')}>{t.windows.openCfd}</OutlineButton>}
+                {features.kds && <OutlineButton onClick={() => void open('kds')}>{t.windows.openKds}</OutlineButton>}
               </div>
               <span className="text-xs text-muted-foreground">{t.windows.hint}</span>
             </Card>

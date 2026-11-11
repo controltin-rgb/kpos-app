@@ -47,7 +47,7 @@ import { JournalService } from '@main/backup/journal'
 import { AuditQueryService } from '@main/services/audit-query.service'
 import { LicenseService } from '@main/license/license.service'
 import { LICENSE_PUBLIC_KEYS } from '@main/license/public-key'
-import { READ_ONLY_BLOCKED_CHANNELS } from '@shared/license'
+import { featureForChannel, READ_ONLY_BLOCKED_CHANNELS, type LicenseFeatures } from '@shared/license'
 
 export interface AppContextOptions {
   db: Db
@@ -82,6 +82,8 @@ export interface AppContextOptions {
   hardwareId?: string
   /** trusted license public keys (default: the embedded ones) */
   licensePublicKeys?: readonly string[]
+  /** trial features override (tests); the app uses src/shared/trial-package.json */
+  trialFeatures?: LicenseFeatures
   /** native dialog to pick a .LIC; returns its text */
   pickLicenseFile?: () => Promise<string | null>
   /** credentials typed in by the shop, kept outside the DB (default: memory, for tests) */
@@ -123,6 +125,7 @@ export function createAppContext(opts: AppContextOptions) {
     publicKeys: opts.licensePublicKeys ?? LICENSE_PUBLIC_KEYS,
     now,
     ...(opts.pickLicenseFile ? { pickFile: opts.pickLicenseFile } : {}),
+    ...(opts.trialFeatures ? { trialFeatures: opts.trialFeatures } : {}),
   })
   const auth = createAuth(db, opts.authSecret)
   const authService = new AuthService(db, auth, audit, now)
@@ -140,17 +143,18 @@ export function createAppContext(opts: AppContextOptions) {
   const settings = new SettingsService(db, audit, now)
   settingsRef = settings
   const stock = new StockService(db)
-  const catalog = new CatalogService(db, audit, now)
+  const features = () => license.status().features
+  const catalog = new CatalogService(db, audit, now, features)
   const inventory = new InventoryService(db, stock, audit, now)
-  const shifts = new ShiftService(db, device, docs, audit, now)
-  const promo = new PromoService(db, settings, authService, audit, now)
-  const sales = new SaleService(db, catalog, stock, shifts, docs, settings, authService, audit, promo, now)
+  const shifts = new ShiftService(db, device, docs, audit, now, features)
+  const promo = new PromoService(db, settings, authService, audit, now, features)
+  const sales = new SaleService(db, catalog, stock, shifts, docs, settings, authService, audit, promo, now, features)
   const kds = new KdsService(db, now)
   const expenses = new ExpenseService(db, shifts, docs, audit, opts.receiptsDir ?? null, now)
   const stockOps = new StockOpsService(db, stock, catalog, shifts, docs, settings, audit, (b) => device.ensure(b), now)
   const org = new OrgRepo(db)
-  const reports = new ReportService(db, sales, shifts, stockOps, expenses, docs, settings, audit, now)
-  const dashboard = new DashboardService(db, reports, shifts, stock, now, () => license.status().daysLeft)
+  const reports = new ReportService(db, sales, shifts, stockOps, expenses, docs, settings, audit, now, features)
+  const dashboard = new DashboardService(db, reports, shifts, stock, now, () => license.status().daysLeft, features)
   const backup = new BackupService(db, audit, settings, { paths: opts.backupPaths ?? null, now, cloudLicensed: () => license.status().features.cloudBackup, journal, ...(opts.pickFolder ? { pickFolder: opts.pickFolder } : {}) })
   const auditQuery = new AuditQueryService(db, now)
   const system = new SystemService(db, audit, authService, now)
@@ -264,6 +268,7 @@ export function createAppContext(opts: AppContextOptions) {
       sqlite: sqliteVersion(db),
       schemaVersion: db.pragma('user_version', { simple: true }) as number,
       deliveryEnabled: settings.get('sales.delivery_enabled'),
+      features: license.status().features,
     }),
 
     'setup.status': () => setup.status(),
@@ -416,7 +421,8 @@ export function createAppContext(opts: AppContextOptions) {
     },
 
     // ---- auto-update (D42) ------------------------------------------------
-    'update.status': () => updater.status(),
+    // auto-update off (D51): Clients read autoCheck=false from here, so they stop checking too
+    'update.status': () => (features().autoUpdate ? updater.status() : { ...updater.status(), autoCheck: false }),
     'update.check': () => updater.check(),
     'update.install': (ctx) => {
       audit.append({ action: 'system.update_install', permission: 'settings:update', userId: ctx.actor.userId, branchId: ctx.actor.branchId, entity: 'system', after: { version: updater.status().version }, risk: 'medium' })
@@ -488,7 +494,10 @@ export function createAppContext(opts: AppContextOptions) {
       return null
     },
     'cfd.state': () => lastCfd,
-    'pos.openWindow': (ctx, input) => (opts.openWindow?.(input.kind, ctx.senderId), null),
+    'pos.openWindow': (ctx, input) => {
+      license.requireFeature(input.kind) // 'kds' | 'cfd' (D51)
+      return opts.openWindow?.(input.kind, ctx.senderId), null
+    },
     'pos.promptPayPayload': (_ctx, input) => {
       const id = settings.get('promptpay.id')
       if (!id) throw new AppError('PROMPTPAY_NOT_CONFIGURED')
@@ -519,7 +528,7 @@ export function createAppContext(opts: AppContextOptions) {
     },
 
     // ---- shifts -----------------------------------------------------------
-    'shift.current': () => shifts.current(),
+    'shift.current': (ctx) => shifts.current(ctx.actor),
     'shift.open': (ctx, input) => withShiftEvent(shifts.open(ctx.actor, input.openingFloatSatang)),
     'shift.cashMove': (ctx, input) => withShiftEvent(shifts.cashMove(ctx.actor, input.kind, input.amountSatang, input.reason)),
     'shift.close': (ctx, input) => withShiftEvent(shifts.close(ctx.actor, input.shiftId, input.counts, input.note ?? null)),
@@ -658,7 +667,11 @@ export function createAppContext(opts: AppContextOptions) {
     handlers,
     sessions,
     resolveActor: (token) => authService.resolve(token),
-    gate: (ch) => (READ_ONLY_BLOCKED_CHANNELS.has(ch) && license.isReadOnly() ? { code: 'LICENSE_READ_ONLY' } : null),
+    gate: (ch) => {
+      if (READ_ONLY_BLOCKED_CHANNELS.has(ch) && license.isReadOnly()) return { code: 'LICENSE_READ_ONLY' }
+      const feature = featureForChannel(ch)
+      return feature && !license.status().features[feature] ? { code: 'FEATURE_NOT_LICENSED', data: { feature } } : null
+    },
     audit,
     ...(opts.log ? { log: opts.log } : {}),
   })

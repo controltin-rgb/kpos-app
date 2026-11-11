@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { signLicense } from '@main/license/license-file'
-import { DAY_MS, type LicenseFeatures, type LicensePayload } from '@shared/license'
+import { DAY_MS, type LicenseFeatures, type LicensePayload, resolveFeatures } from '@shared/license'
 import type { createTestApp } from './app'
 import { T0 } from './fixtures'
 
@@ -23,7 +23,7 @@ export function testLicense(over: Partial<Omit<LicensePayload, 'features'>> & { 
       issuedAt: T0,
       expiresAt: null,
       ...rest,
-      features: { maxEmployees: 10, maxClients: 0, cloudBackup: false, ...features },
+      features: resolveFeatures({ maxEmployees: 10, maxClients: 0, cloudBackup: false, ...features }),
     },
     TEST_LICENSE_KEYS.priv,
   )

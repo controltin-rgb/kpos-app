@@ -110,7 +110,9 @@ export function LanSection() {
       {s.role === 'standalone' ? (
         <>
           <div className="rounded-[14px] bg-[#F5F2FE] px-3.5 py-3 text-[13px] text-[#4B2FB8]">{l.standaloneNote}</div>
-          {editable && (
+          {/* maxClients 0 = the license has no Host (D51): this machine stays a single machine */}
+          {s.maxClients === 0 && <div className="rounded-[14px] bg-warning px-3.5 py-3 text-[13px] text-warning-foreground">{l.licenseNoHost}</div>}
+          {editable && s.maxClients > 0 && (
             <div className="flex flex-wrap items-end gap-3">
               <label className="flex w-40 flex-col gap-1.5 text-sm font-semibold">
                 {l.port}

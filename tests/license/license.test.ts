@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { formatHardwareId } from '@main/license/hardware-id'
 import { parseLicense, signLicense } from '@main/license/license-file'
-import { DAY_MS, evaluateLicense, TRIAL_FEATURES, type LicensePayload } from '@shared/license'
+import { DAY_MS, evaluateLicense, resolveFeatures, TRIAL_FEATURES, type LicensePayload } from '@shared/license'
 import { createTestApp } from '../helpers/app'
 import { T0 } from '../helpers/fixtures'
 
@@ -21,7 +21,7 @@ const payload = (over: Partial<LicensePayload> = {}): LicensePayload => ({
   hardwareId: HW,
   issuedAt: T0,
   expiresAt: T0 + 365 * DAY_MS,
-  features: { maxEmployees: 3, maxClients: 2, cloudBackup: true },
+  features: resolveFeatures({ maxEmployees: 3, maxClients: 2, cloudBackup: true }),
   ...over,
 })
 
@@ -121,6 +121,21 @@ describe('license service', () => {
       { license_id: 'lic-1', replaced: 1 },
       { license_id: 'lic-2', replaced: 0 },
     ])
+  })
+
+  it('a file issued before the installed one is refused (no going back to an old, bigger package); the same file may be re-installed', async () => {
+    const t = await app()
+    const oldSystem = signLicense(payload({ licenseId: 'old-system', plan: 'System', issuedAt: T0 - 10 * DAY_MS, expiresAt: null }), K.priv)
+    const newStandard = signLicense(payload({ licenseId: 'new-standard', plan: 'Standard', issuedAt: T0 - DAY_MS, expiresAt: null, features: resolveFeatures({ maxEmployees: 3, maxClients: 0, cloudBackup: false, kds: false }) }), K.priv)
+    await t.call(1, 'license.import', { content: oldSystem })
+    await t.call(1, 'license.import', { content: newStandard }) // downgrade: newer file, smaller package — allowed
+    expect(await t.call(1, 'license.status')).toMatchObject({ plan: 'Standard', features: { kds: false } })
+    await t.fails('LICENSE_OUTDATED', 1, 'license.import', { content: oldSystem })
+    expect(await t.call(1, 'license.status')).toMatchObject({ plan: 'Standard' })
+    await t.call(1, 'license.import', { content: newStandard }) // re-installing the current file is fine
+    const later = signLicense(payload({ licenseId: 'later-pro', plan: 'Pro', issuedAt: T0, expiresAt: null }), K.priv)
+    await t.call(1, 'license.import', { content: later })
+    expect(await t.call(1, 'license.status')).toMatchObject({ plan: 'Pro' })
   })
 
   it('a license row edited in the database does not verify (back to trial rules)', async () => {

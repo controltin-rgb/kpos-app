@@ -22,6 +22,16 @@ export const payloadSchema = z.object({
     maxEmployees: z.number().int().min(1).max(1000),
     maxClients: z.number().int().min(0).max(100),
     cloudBackup: z.boolean(),
+    // D51 — absent in licenses issued before it: those get everything (LEGACY_FEATURES)
+    maxMembers: z.number().int().min(0).max(1_000_000).default(0),
+    cfd: z.boolean().default(true),
+    kds: z.boolean().default(true),
+    promotions: z.boolean().default(true),
+    autoUpdate: z.boolean().default(true),
+    labels: z.boolean().default(true),
+    modifiers: z.boolean().default(true),
+    drawerShift: z.boolean().default(true),
+    inventory: z.boolean().default(true),
   }),
 }) satisfies z.ZodType<LicensePayload>
 

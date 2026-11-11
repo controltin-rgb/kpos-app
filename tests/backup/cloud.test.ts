@@ -142,13 +142,17 @@ describe('cloud mirror of the backup folder', () => {
     const t = createTestApp({ files: { dbPath: join(root, 'data', 'kposs.sqlite'), backupDir: join(root, 'backup') }, cloudFetch: s3.fetch })
     await t.setup()
     await t.call(1, 'backup.run')
-    const saved = await t.call(1, 'cloud.save', { enabled: true, endpoint: CFG.endpoint, region: 'auto', bucket: CFG.bucket, prefix: CFG.prefix, accessKeyId: 'AKIA', secretAccessKey: 'secret', passphrase: CFG.passphrase })
-    expect(saved).toMatchObject({ configured: true, hasSecretKey: true, hasPassphrase: true, licensed: false })
+    const cfg = { enabled: true, endpoint: CFG.endpoint, region: 'auto', bucket: CFG.bucket, prefix: CFG.prefix, accessKeyId: 'AKIA', secretAccessKey: 'secret', passphrase: CFG.passphrase }
+    // trial: no cloud feature (D29/D51) — the router refuses every cloud write, the overview still shows "not licensed"
+    await t.fails('FEATURE_NOT_LICENSED', 1, 'cloud.save', cfg)
+    await t.fails('FEATURE_NOT_LICENSED', 1, 'cloud.syncNow')
+    expect(await t.call(1, 'cloud.overview')).toMatchObject({ licensed: false })
+    await installLicense(t, { features: { cloudBackup: true } })
+    const saved = await t.call(1, 'cloud.save', cfg)
+    expect(saved).toMatchObject({ configured: true, hasSecretKey: true, hasPassphrase: true, licensed: true })
     expect(JSON.stringify(t.db.prepare('SELECT value_json FROM settings').pluck().all())).not.toContain('secret')
     expect(JSON.stringify(saved)).not.toContain(CFG.passphrase)
 
-    await t.fails('CLOUD_NOT_CONFIGURED', 1, 'cloud.syncNow') // trial: no cloud feature (D29)
-    await installLicense(t, { features: { cloudBackup: true } })
     const r = await t.call(1, 'cloud.syncNow')
     expect(r.uploadedFiles).toBeGreaterThanOrEqual(2) // snapshot + manifest
     expect(t.auditActions()).toEqual(expect.arrayContaining(['backup.cloud_credentials', 'backup.cloud_sync']))

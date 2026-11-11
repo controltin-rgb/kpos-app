@@ -9,6 +9,10 @@ import type { BackupPaths } from '@main/backup/backup.service'
 import { migratedDb, MIGRATIONS_DIR, T0 } from './fixtures'
 import { closeAfter } from './tmp'
 import { TEST_HW, TEST_LICENSE_KEYS } from './license'
+import { resolveFeatures, type LicenseFeatures } from '@shared/license'
+
+/** The trial the tests assume (D28): everything except Host and Cloud, 10 staff. */
+export const TEST_TRIAL_FEATURES: LicenseFeatures = resolveFeatures({ maxEmployees: 10, maxClients: 0, cloudBackup: false })
 
 export const ADMIN = { username: 'admin', password: 'admin-pass-1234', displayName: 'ผู้ดูแล' }
 
@@ -21,6 +25,8 @@ export interface TestAppOptions {
   /** licensing: this machine's id and the trusted public keys */
   hardwareId?: string
   licensePublicKeys?: readonly string[]
+  /** trial features (default: a fixed test trial — everything but Host/Cloud — so tests never depend on trial-package.json) */
+  trialFeatures?: LicenseFeatures
   /** Host/Client networking */
   lan?: AppContextOptions['lan']
   printHtml?: AppContextOptions['printHtml']
@@ -50,6 +56,7 @@ export function createTestApp(opts: TestAppOptions = {}) {
     ...(opts.relaunch ? { relaunch: opts.relaunch } : {}),
     hardwareId: opts.hardwareId ?? TEST_HW,
     licensePublicKeys: opts.licensePublicKeys ?? [TEST_LICENSE_KEYS.pub],
+    trialFeatures: opts.trialFeatures ?? TEST_TRIAL_FEATURES,
     ...(opts.lan ? { lan: opts.lan } : {}),
     ...(opts.printHtml ? { printHtml: opts.printHtml } : {}),
     ...(opts.saveFile ? { saveFile: opts.saveFile } : {}),

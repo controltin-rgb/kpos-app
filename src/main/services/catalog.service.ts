@@ -1,3 +1,4 @@
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import type { Actor } from '@main/auth/actor'
 import type { SaleableSnapshot } from '@shared/pricing'
 import type { Db } from '@main/db/connection'
@@ -32,6 +33,7 @@ export class CatalogService {
     private readonly db: Db,
     private readonly audit: AuditService,
     private readonly now: () => number = Date.now,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {
     this.repo = new CatalogRepo(db)
     this.stock = new StockRepo(db)
@@ -140,11 +142,12 @@ export class CatalogService {
   saveProduct(actor: Actor, input: ParsedInput<'catalog.saveProduct'>): ProductDto {
     if (input.categoryId && this.repo.category(input.categoryId)?.branch_id !== actor.branchId) throw new AppError('NOT_FOUND', { entity: 'categories' })
     if (input.sku && this.repo.skuTaken(actor.branchId, input.sku, input.id ?? null)) throw new AppError('SKU_TAKEN')
-    for (const r of input.recipe) {
+    const f = this.features()
+    for (const r of f.inventory ? input.recipe : []) {
       if (this.stock.ingredient(r.ingredientId)?.branch_id !== actor.branchId) throw new AppError('NOT_FOUND', { entity: 'ingredients' })
     }
-    if (new Set(input.recipe.map((r) => r.ingredientId)).size !== input.recipe.length) throw new AppError('INVALID_INPUT', { invalid: ['recipe'] })
-    for (const g of input.modifierGroupIds) if (this.repo.group(g)?.branch_id !== actor.branchId) throw new AppError('NOT_FOUND', { entity: 'modifier_groups' })
+    if (f.inventory && new Set(input.recipe.map((r) => r.ingredientId)).size !== input.recipe.length) throw new AppError('INVALID_INPUT', { invalid: ['recipe'] })
+    for (const g of f.modifiers ? input.modifierGroupIds : []) if (this.repo.group(g)?.branch_id !== actor.branchId) throw new AppError('NOT_FOUND', { entity: 'modifier_groups' })
 
     const at = this.now()
     const sizes = input.sizes.map((s, i) => ({ ...s, id: s.id ?? uuidv7(at) , sortOrder: i }))
@@ -183,7 +186,8 @@ export class CatalogService {
         )
       }
       this.repo.deleteSizesExcept(pid, [...sizeIds], at)
-      this.repo.replaceRecipe(
+      // features off (D51): the stored recipe / group links are kept untouched, so turning them back on loses nothing
+      if (f.inventory) this.repo.replaceRecipe(
         pid,
         input.recipe.map((r, i) => ({
           id: uuidv7(at),
@@ -196,7 +200,7 @@ export class CatalogService {
         })),
         at,
       )
-      this.repo.replaceProductGroups(pid, input.modifierGroupIds)
+      if (f.modifiers) this.repo.replaceProductGroups(pid, input.modifierGroupIds)
       this.log(actor, before ? 'catalog.product_update' : 'catalog.product_create', 'products', pid, before, this.snapshot(actor, pid), 'medium')
     }).immediate()
     return this.products(actor).find((p) => p.id === id)!
@@ -305,10 +309,10 @@ export class CatalogService {
         barcode: p.barcode,
         vatType: p.vatType,
         sizes: p.sizes,
-        modifierGroupIds: p.modifierGroupIds,
-        lowStock: p.recipe.some((r) => stockOut.has(r.ingredientId)),
+        modifierGroupIds: this.features().modifiers ? p.modifierGroupIds : [],
+        lowStock: this.features().inventory && p.recipe.some((r) => stockOut.has(r.ingredientId)),
       })),
-      groups: this.groups(actor).map((g) => ({
+      groups: (this.features().modifiers ? this.groups(actor) : []).map((g) => ({
         id: g.id,
         name: g.name,
         minSelect: g.minSelect,
@@ -322,9 +326,10 @@ export class CatalogService {
   saleable(branchId: string, productId: string): SaleableProduct | null {
     const product = this.repo.product(productId)
     if (!product || product.branch_id !== branchId || product.active !== 1) return null
-    const recipeRows = this.repo.recipe(productId)
+    const f = this.features()
+    const recipeRows = f.inventory ? this.repo.recipe(productId) : []
     const perSize = this.repo.recipeSizeQty(recipeRows.map((r) => r.id))
-    const groupIds = this.repo.productGroups(productId)
+    const groupIds = f.modifiers ? this.repo.productGroups(productId) : []
     const groups = groupIds.map((g) => this.repo.group(g)).filter((g): g is GroupRow => !!g)
     const options = this.repo.options(groups.map((g) => g.id))
     const items = this.repo.optionItems(options.map((o) => o.id))
@@ -345,7 +350,7 @@ export class CatalogService {
             id: o.id,
             name: o.name,
             priceSatang: o.price_satang,
-            items: items.filter((i) => i.option_id === o.id).map((i) => ({ ingredientId: i.ingredient_id, qtyMilli: i.qty_milli, sizeMode: i.size_mode })),
+            items: items.filter((i) => f.inventory && i.option_id === o.id).map((i) => ({ ingredientId: i.ingredient_id, qtyMilli: i.qty_milli, sizeMode: i.size_mode })),
           })),
       })),
     }
@@ -387,7 +392,7 @@ export class CatalogService {
 
   /** Cost of one unit from the lots that would be used now (oldest lot's unit cost per ingredient). */
   private estimateCost(recipe: RecipeLine[], size: SizeDto | null): number | null {
-    if (!recipe.length) return null
+    if (!recipe.length || !this.features().inventory) return null
     let total = 0
     for (const r of requirementPerUnit(recipe, size ? { id: size.id, multiplierMilli: size.multiplierMilli } : null, [])) {
       const lot = this.stock.lotsOf(r.ingredientId).find((l) => l.qty_remaining_milli > 0) ?? this.stock.lotsOf(r.ingredientId)[0]

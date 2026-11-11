@@ -5,6 +5,7 @@ import { UsersRepo } from '@main/db/repos/users.repo'
 import type { ParsedInput } from '@shared/api'
 import type { CouponDto, MemberBillDto, MemberContactDto, MemberDetailDto, MemberDto, PointsRulesDto, PromotionDto, TierDto } from '@shared/api-promo'
 import { AppError } from '@shared/errors'
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import { uuidv7 } from '@shared/id'
 import { mulDivHalfUp, percentOfSatang } from '@shared/money'
 import { bestPromotions, type AppliedPromo, type PromoDef, type PromoLine, type PromoRules } from '@shared/promotions'
@@ -84,8 +85,15 @@ export class PromoService {
     private readonly authService: AuthService,
     private readonly audit: AuditService,
     private readonly now: () => number = Date.now,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {
     this.users = new UsersRepo(db)
+  }
+
+  /** Members cap of the license (D51); 0 = unlimited. Existing members stay usable when the cap is lowered. */
+  private assertMemberCap(): void {
+    const cap = this.features().maxMembers
+    if (cap > 0 && (this.db.prepare('SELECT count(*) FROM members WHERE deleted_at IS NULL').pluck().get() as number) >= cap) throw new AppError('MEMBER_CAP_REACHED', { cap })
   }
 
   // ===========================================================================
@@ -265,6 +273,7 @@ export class PromoService {
     const at = this.now()
     const id = uuidv7(at)
     this.db.transaction(() => {
+      this.assertMemberCap()
       if (this.db.prepare('SELECT 1 FROM members WHERE phone = ? AND deleted_at IS NULL').get(input.phone)) throw new AppError('INVALID_INPUT', { fields: { phone: ['duplicate'] } })
       this.db
         .prepare('INSERT INTO members (id, branch_id, phone, name, consent_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -300,6 +309,7 @@ export class PromoService {
           .run({ ...row, at, id })
         this.audit.append({ action: 'members.update', permission: 'promo:update', userId: actor.userId, branchId: actor.branchId, entity: 'members', entityId: id, before: view(before), after: view(row), risk: 'low' })
       } else {
+        this.assertMemberCap()
         this.db
           .prepare(
             'INSERT INTO members (id, branch_id, phone, name, birth_date, email, line_id, phone2, note, consent_at, created_at, updated_at) VALUES (@id, @branch, @phone, @name, @birth_date, @email, @line_id, @phone2, @note, @at, @at, @at)',
@@ -401,6 +411,8 @@ export class PromoService {
     let couponId: string | null = null
     let couponError: PricedDiscounts['couponError'] = null
     const couponPromos = new Set<string>()
+    const promotionsOn = this.features().promotions
+    if (d.couponCode && !promotionsOn) throw new AppError('FEATURE_NOT_LICENSED', { feature: 'promotions' })
     if (d.couponCode) {
       const c = this.findCoupon(actor.branchId, d.couponCode)
       if (!c) couponError = 'not_found'
@@ -411,7 +423,8 @@ export class PromoService {
         couponPromos.add(c.promotion_id)
       }
     }
-    const best = bestPromotions(this.defs(actor.branchId), lines, now, { coupons: couponPromos, excluded: new Set(d.excludedPromotionIds) })
+    // promotions off (D51): no automatic promotions; manual discount and points below still work
+    const best = promotionsOn ? bestPromotions(this.defs(actor.branchId), lines, now, { coupons: couponPromos, excluded: new Set(d.excludedPromotionIds) }) : { applied: [], totalSatang: 0 }
     const promotions = best.applied.map((a) => ({ ...a, couponId: couponPromos.has(a.promotionId) ? couponId : null }))
     let remaining = subtotal - best.totalSatang
 

@@ -8,7 +8,7 @@ import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { formatDateTimeShort, money } from '@renderer/lib/format'
 import { periodFrom, rowClass } from '@renderer/lib/forms'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 import { ReasonDialog } from './expenses'
 
@@ -31,6 +31,7 @@ function PeriodBar({ period, onChange, children }: { period: Period; onChange: (
 
 function ExportButton({ range }: { range: { from: number; to: number } }) {
   const { can } = useSession()
+  const features = useFeatures()
   const toast = useToast()
   const [kind, setKind] = useState<ExportKind>('sales')
   if (!can('reports:export')) return null
@@ -45,7 +46,7 @@ function ExportButton({ range }: { range: { from: number; to: number } }) {
   return (
     <div className="flex gap-2">
       <SelectInput aria-label={r.exportPick} className="w-44" value={kind} onChange={(e) => setKind(e.target.value as ExportKind)}>
-        {(Object.keys(r.exportWhat) as ExportKind[]).map((k) => (
+        {(Object.keys(r.exportWhat) as ExportKind[]).filter((k) => features.inventory || (k !== 'profit' && k !== 'waste')).map((k) => (
           <option key={k} value={k}>
             {r.exportWhat[k]}
           </option>
@@ -93,7 +94,9 @@ function SalesTab() {
   const [range, setRange] = useState(() => periodFrom('today', Date.now()))
   const [sales, setSales] = useState<SalesReportDto | null>(null)
   const [profit, setProfit] = useState<ProfitReportDto | null>(null)
-  const seeCost = can('reports:view_cost')
+  const features = useFeatures()
+  // profit / COGS / waste need the inventory feature (D51)
+  const seeCost = can('reports:view_cost') && features.inventory
 
   useEffect(() => {
     void call('reports.sales', { ...range, bucket: period === 'today' ? 'hour' : 'day' }).then(setSales, (err: unknown) => toast(errorMessage(err), 'error'))
@@ -183,7 +186,7 @@ function SalesTab() {
               </Card>
             )
           ) : (
-            <span className="text-xs text-muted-foreground">{r.noCost}</span>
+            features.inventory && <span className="text-xs text-muted-foreground">{r.noCost}</span>
           )}
         </>
       )}

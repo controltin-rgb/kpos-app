@@ -5,7 +5,7 @@ import type { AuditService } from '@main/services/audit.service'
 import type { LicenseStatusDto } from '@shared/api-system'
 import { AppError } from '@shared/errors'
 import { uuidv7 } from '@shared/id'
-import { evaluateLicense, type LicensePayload } from '@shared/license'
+import { evaluateLicense, type FeatureKey, type LicenseFeatures, type LicensePayload } from '@shared/license'
 import { parseLicense, type LicenseProblem } from './license-file'
 
 const CACHE_MS = 60_000
@@ -29,6 +29,8 @@ export interface LicenseServiceOptions {
   now?: () => number
   /** native "open .LIC" dialog; returns the file contents or null */
   pickFile?: () => Promise<string | null>
+  /** what a shop without a license gets (default: the package in src/shared/trial-package.json) */
+  trialFeatures?: LicenseFeatures
 }
 
 /**
@@ -98,7 +100,7 @@ export class LicenseService {
     const row = this.currentRow()
     const parsed = row ? this.verify(row.raw) : null
     const license = parsed?.ok ? parsed.payload : null
-    const ev = evaluateLicense(at, setupAt, license)
+    const ev = evaluateLicense(at, setupAt, license, this.opts.trialFeatures)
     return {
       ...ev,
       hardwareId: this.opts.hardwareId,
@@ -144,6 +146,15 @@ export class LicenseService {
     return this.status().readOnly
   }
 
+  /** Throws FEATURE_NOT_LICENSED when the license does not grant `key` (D51). For shared channels the router gate cannot cover. */
+  requireFeature(key: FeatureKey): void {
+    if (!this.status().features[key]) throw new AppError('FEATURE_NOT_LICENSED', { feature: key })
+  }
+
+  hasFeature(key: FeatureKey): boolean {
+    return this.status().features[key]
+  }
+
   employeeCap(): number {
     return this.status().features.maxEmployees
   }
@@ -152,13 +163,19 @@ export class LicenseService {
     return this.opts.pickFile ? this.opts.pickFile() : null
   }
 
-  /** Installs a .LIC (license:manage). Rejects bad signatures, other machines' files and dead licenses. */
+  /**
+   * Installs a .LIC (license:manage). Rejects bad signatures, other machines' files, dead licenses and files
+   * issued before one already installed here — so an old, bigger package cannot be put back after a downgrade.
+   * Re-installing the same file is allowed.
+   */
   install(actor: Actor, raw: string): LicenseStatusDto {
     const parsed = this.verify(raw)
     if (!parsed.ok) throw new AppError('LICENSE_INVALID', { reason: parsed.problem })
     const p = parsed.payload
     const { at } = this.effectiveNow()
     if (evaluateLicense(at, null, p).state === 'expired') throw new AppError('LICENSE_INVALID', { reason: 'expired' })
+    const newest = this.db.prepare('SELECT max(issued_at) FROM licenses').pluck().get() as number | null
+    if (newest !== null && p.issuedAt < newest) throw new AppError('LICENSE_OUTDATED', { issuedAt: p.issuedAt, installedIssuedAt: newest })
 
     const before = this.status()
     const now = this.now()

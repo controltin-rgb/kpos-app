@@ -6,7 +6,7 @@ import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { formatDateTimeShort, money } from '@renderer/lib/format'
 import { bangkokMonthStart, bangkokToday, dateToMs, msToDateInput, panelClass, rowClass } from '@renderer/lib/forms'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 
 const e_ = t.expenses
@@ -16,12 +16,15 @@ const BAR = ['#4C8DF6', '#1BA56B', '#F7791E', '#6A47DB', '#E23B76', '#E5A10C']
 /** docs/design/Expenses.dc.html (draft): list, monthly share by category, new expense. */
 export function ExpensesPage() {
   const { can } = useSession()
+  const features = useFeatures()
+  // no cash drawer in the license (D51): expenses are paid from petty cash or the bank only
+  const sources = features.drawerShift ? SOURCES : SOURCES.filter((s) => s !== 'drawer')
   const toast = useToast()
   const [cats, setCats] = useState<ExpenseCategoryDto[]>([])
   const [filter, setFilter] = useState({ categoryId: '', source: '' as '' | ExpenseSource, page: 1 })
   const [list, setList] = useState<{ items: ExpenseDto[]; total: number }>({ items: [], total: 0 })
   const [summary, setSummary] = useState<ExpenseSummaryDto | null>(null)
-  const [form, setForm] = useState(() => ({ categoryId: '', description: '', vendor: '', amount: null as number | null, source: 'drawer' as ExpenseSource, date: msToDateInput(Date.now()), hasTaxInvoice: false, vat: null as number | null, receiptFile: null as string | null }))
+  const [form, setForm] = useState(() => ({ categoryId: '', description: '', vendor: '', amount: null as number | null, source: (features.drawerShift ? 'drawer' : 'petty_cash') as ExpenseSource, date: msToDateInput(Date.now()), hasTaxInvoice: false, vat: null as number | null, receiptFile: null as string | null }))
   const [voiding, setVoiding] = useState<ExpenseDto | null>(null)
   const [receipt, setReceipt] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -199,7 +202,7 @@ export function ExpensesPage() {
               </Field>
             </div>
             <div className="flex flex-col gap-1.5">
-              {SOURCES.map((s) => (
+              {sources.map((s) => (
                 <button
                   key={s}
                   type="button"

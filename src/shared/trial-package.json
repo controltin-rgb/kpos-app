@@ -1,0 +1,17 @@
+{
+  "name": "ทดลองใช้ (30วัน)",
+  "features": {
+    "maxMembers": 50,
+    "cfd": false,
+    "kds": false,
+    "promotions": true,
+    "autoUpdate": false,
+    "labels": true,
+    "modifiers": true,
+    "drawerShift": true,
+    "inventory": true,
+    "maxEmployees": 10,
+    "maxClients": 0,
+    "cloudBackup": false
+  }
+}

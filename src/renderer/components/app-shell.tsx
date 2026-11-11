@@ -11,7 +11,7 @@ import { useSession } from '@renderer/lib/session'
 import { useTheme, type ThemePref } from '@renderer/lib/theme'
 import { cn } from '@renderer/lib/utils'
 import { Icon } from './icons'
-import { NAV, ROUTES, type NavItem } from './nav'
+import { NAV, navFeatureOn, ROUTES, type NavItem } from './nav'
 import { GRADIENTS, IconTile } from './ui'
 
 const itemBase = 'flex min-h-12 items-center gap-3 rounded-[14px] px-2.5 text-sm no-underline'
@@ -38,9 +38,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 function Sidebar({ pathname }: { pathname: string }) {
   const { can, user, system } = useSession()
   const visible = (p: NavItem['permission']) => p === null || p === undefined || can(p)
-  const featureOn = (f: NavItem['feature']) => f !== 'delivery' || system?.deliveryEnabled !== false
+  const featureOn = (f: NavItem['feature']) => navFeatureOn(f, system)
   const items = NAV.map((i) => (i.children ? { ...i, children: i.children.filter((c) => visible(c.permission) && featureOn(c.feature)) } : i)).filter(
-    (i) => (i.children ? i.children.length > 0 : visible(i.permission)),
+    (i) => (i.children ? i.children.length > 0 : visible(i.permission) && featureOn(i.feature)),
   )
   // groups are collapsed by default; the group containing the current page starts open
   const [open, setOpen] = useState<Record<string, boolean>>(() =>

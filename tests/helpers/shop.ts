@@ -1,5 +1,6 @@
 import type { createTestApp } from './app'
 import { T0 } from './fixtures'
+import { installLicense } from './license'
 
 type App = ReturnType<typeof createTestApp>
 const DAY = 86_400_000
@@ -10,6 +11,8 @@ const DAY = 86_400_000
  * Milk has two lots: the OLDER expiry was received LATER, so FEFO must take it first.
  */
 export async function seedShop(t: App) {
+  // a full license, so these tests do not depend on which package is configured as the trial (src/shared/trial-package.json)
+  await installLicense(t, { features: { maxClients: 5 } })
   const ing = async (name: string, baseUnit: 'ml' | 'g' | 'pcs', hasExpiry = false) =>
     (await t.call(1, 'inventory.saveIngredient', { name, baseUnit, hasExpiry })).id
   const milk = await ing('นมสด', 'ml', true)

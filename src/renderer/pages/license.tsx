@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { LicenseStatusDto } from '@shared/api-system'
-import { GradientButton, OutlineButton, useToast } from '@renderer/components/ui'
+import { FEATURE_KEYS } from '@shared/license'
+import { Chip, GradientButton, OutlineButton, useToast } from '@renderer/components/ui'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { formatDateTimeShort } from '@renderer/lib/format'
@@ -112,12 +113,23 @@ export function LicenseSection() {
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
         <span>
-          {l.maxClients}: <b>{l.clients(s.features.maxClients)}</b>
+          {l.maxClients}: <b>{s.features.maxClients === 0 ? l.hostNo : l.clients(s.features.maxClients)}</b>
         </span>
         <span>
-          {l.cloud}: <b>{s.features.cloudBackup ? l.cloudOn : l.cloudOff}</b>
+          {l.maxMembers}: <b>{l.members(s.features.maxMembers)}</b>
         </span>
         {licensed && s.installedAt && <span className="text-muted-foreground">{l.installedBy(s.installedByName ?? '—', formatDateTimeShort(s.installedAt))}</span>}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm font-semibold">{l.featuresTitle}</span>
+        <div className="flex flex-wrap gap-2">
+          {FEATURE_KEYS.map((k) => (
+            <Chip key={k} bg={s.features[k] ? '#DDF5E8' : '#EFEBE6'} fg={s.features[k] ? '#11724A' : '#5C6270'}>
+              {s.features[k] ? '✓' : '✕'} {l.features[k]}
+            </Chip>
+          ))}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2.5">

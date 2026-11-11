@@ -4,6 +4,7 @@ import { renderTaxInvoice } from '@main/print/tax-invoice'
 import type { ParsedInput } from '@shared/api'
 import type { ChannelKey, ExpenseReportDto, ProfitReportDto, SalesReportDto, SalesSummaryDto, SalesSummaryRowDto, TaxInvoiceDto, ZListItemDto } from '@shared/api-reports'
 import { AppError } from '@shared/errors'
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import { uuidv7 } from '@shared/id'
 import { formatBaht, mulDivHalfUp } from '@shared/money'
 import { isValidThaiTaxId } from '@shared/tax-id'
@@ -42,6 +43,7 @@ export class ReportService {
     private readonly settings: SettingsService,
     private readonly audit: AuditService,
     private readonly now: () => number = Date.now,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {}
 
   // ===========================================================================
@@ -244,6 +246,8 @@ export class ReportService {
 
   /** CSV (UTF-8 with BOM so Excel shows Thai correctly). */
   exportCsv(actor: Actor, report: ParsedInput<'reports.export'>['report'], from: number, to: number): { name: string; content: string } {
+    // stock-based reports need the inventory feature (D51)
+    if ((report === 'profit' || report === 'waste' || report === 'expiry') && !this.features().inventory) throw new AppError('FEATURE_NOT_LICENSED', { feature: 'inventory' })
     const money = (s: number) => formatBaht(s).replace(/,/g, '')
     const cell = (v: string | number) => {
       const s = String(v)

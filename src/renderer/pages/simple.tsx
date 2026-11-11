@@ -13,6 +13,17 @@ export function PlaceholderPage({ route }: { route: NavLeaf }) {
   )
 }
 
+export function FeatureOffPage() {
+  return (
+    <>
+      <PageHeader icon="lock" tone="amber" title={t.featureOff.title} />
+      <Card>
+        <p className="m-0 text-sm text-muted-foreground">{t.featureOff.body}</p>
+      </Card>
+    </>
+  )
+}
+
 export function ForbiddenPage() {
   return (
     <>

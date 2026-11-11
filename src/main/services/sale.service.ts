@@ -10,6 +10,7 @@ import { priceLine, type PricedLine } from '@shared/pricing'
 import { formatBillNo } from '@shared/bill-number'
 import type { OfflineBill, SyncResult } from '@shared/sync'
 import { AppError } from '@shared/errors'
+import { FULL_FEATURES, type FeatureSource } from '@shared/license'
 import { uuidv7 } from '@shared/id'
 import { percentOfSatang } from '@shared/money'
 import type { Permission } from '@shared/permissions'
@@ -53,6 +54,7 @@ export class SaleService {
     private readonly audit: AuditService,
     private readonly promo: PromoService,
     private readonly now: () => number = Date.now,
+    private readonly features: FeatureSource = () => FULL_FEATURES,
   ) {
     this.repo = new SalesRepo(db)
     this.users = new UsersRepo(db)
@@ -97,7 +99,7 @@ export class SaleService {
     const shortages: ShortageNoticeDto[] = []
 
     this.db.transaction(() => {
-      const shift = this.shifts.requireOpen()
+      const shift = this.shifts.requireOpen(actor)
       const billNo = this.docs.nextBillNo(actor.branchId, this.settings.get('bill.reset_policy'), at)
       shortages.push(...this.persist({ userId: actor.userId, branchId: actor.branchId, billId, billNo, shift, at, order: input, lines, totals, priced, pointsEarned, pay, tendered, change, kds: true }))
     }).immediate()
@@ -290,7 +292,8 @@ export class SaleService {
       for (const n of this.stock.deduct(stockCtx, 'bill_item', itemId, scaleRequirement(l.requirementPerUnit, l.qty))) {
         shortages.push({ ingredientName: n.ingredientName, baseUnit: n.baseUnit, qtyMilli: n.qtyMilli })
       }
-      if (a.kds && l.kdsStation) {
+      // KDS off (D51): no tickets pile up on a screen nobody has
+      if (a.kds && l.kdsStation && this.features().kds) {
         // 'kds.complete_on_pay': the drink is handed over at payment, so the ticket is done at once and
         // never waits on the bar screen (still recorded, e.g. for prep-time reports)
         const done = kdsDoneOnPay ? a.at : null
@@ -441,9 +444,9 @@ export class SaleService {
 
     let deviceId: string | null = bill.device_id
     if (kind === 'refund' && cashPaid > 0) {
-      const open = this.shifts.requireOpen() // cash leaves the drawer of the shift open now
+      const open = this.shifts.requireOpen(actor) // cash leaves the drawer of the shift open now
       deviceId = open.device_id
-      if (this.shifts.expected(open.id) < cashPaid) throw new AppError('PAYMENT_INVALID', { reason: 'drawer_insufficient' })
+      if (this.shifts.drawerEnabled() && this.shifts.expected(open.id) < cashPaid) throw new AppError('PAYMENT_INVALID', { reason: 'drawer_insufficient' })
       this.repo.insertCash({
         id: uuidv7(at),
         branch_id: bill.branch_id,

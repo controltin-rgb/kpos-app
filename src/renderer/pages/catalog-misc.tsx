@@ -7,7 +7,7 @@ import { useConfirm } from '@renderer/components/confirm'
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { money, qty } from '@renderer/lib/format'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 
 const rowCls = (sel: boolean) => cn('box-border flex min-h-[60px] cursor-pointer items-center gap-3 rounded-2xl border-2 px-3 py-1.5', sel ? 'border-[#9776F6] bg-[#F5F2FE]' : 'border-transparent bg-[#F7F5F2]')
@@ -25,6 +25,7 @@ function toMilli(s: string): number | null {
 
 export function CategoriesPage() {
   const { can } = useSession()
+  const features = useFeatures()
   const toast = useToast()
   const confirm = useConfirm()
   const c = t.categories
@@ -89,6 +90,7 @@ export function CategoriesPage() {
               <Field label={c.name}>
                 <TextInput value={draft.name} maxLength={120} autoFocus disabled={!editable} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </Field>
+              {features.kds && (
               <Field label={c.station}>
                 <SelectInput value={draft.kdsStation} disabled={!editable} onChange={(e) => setDraft({ ...draft, kdsStation: e.target.value })}>
                   {(Object.keys(c.stations) as (keyof typeof c.stations)[]).map((s) => (
@@ -98,6 +100,7 @@ export function CategoriesPage() {
                   ))}
                 </SelectInput>
               </Field>
+              )}
               <Field label={c.skuPrefix} hint={c.skuPrefixHint(draft.skuPrefix || 'P')}>
                 <TextInput value={draft.skuPrefix} maxLength={6} placeholder="P" disabled={!editable} onChange={(e) => setDraft({ ...draft, skuPrefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') })} />
               </Field>
@@ -161,6 +164,7 @@ const toGroupDraft = (g: ModifierGroupDto): GroupDraft => ({
 
 export function ModifiersPage() {
   const { can } = useSession()
+  const features = useFeatures()
   const toast = useToast()
   const confirm = useConfirm()
   const m = t.modifiers
@@ -254,10 +258,12 @@ export function ModifiersPage() {
                   <TextInput inputMode="numeric" value={draft.max} disabled={!editable} onChange={(e) => setDraft({ ...draft, max: e.target.value.replace(/\D/g, '') })} />
                 </Field>
               </div>
+              {features.kds && (
               <div className="flex min-h-12 items-center justify-between">
                 <span className="text-[15px]">{m.highlight}</span>
                 <Toggle checked={draft.kdsHighlight} label={m.highlight} disabled={!editable} onChange={(v) => setDraft({ ...draft, kdsHighlight: v })} />
               </div>
+              )}
               <span className="text-sm font-bold">{m.options}</span>
               {draft.options.map((o) => (
                 <div key={o.id} className="flex flex-col gap-2 rounded-2xl bg-[#F7F5F2] p-3">
@@ -282,6 +288,8 @@ export function ModifiersPage() {
                       ×
                     </button>
                   </div>
+                  {features.inventory && (
+                    <>
                   <span className="text-xs font-semibold text-muted-foreground">{m.optionBom}</span>
                   {o.items.map((it) => (
                     <div key={it.key} className="grid grid-cols-[1fr_90px_130px_auto] items-center gap-2">
@@ -307,6 +315,8 @@ export function ModifiersPage() {
                     <button type="button" onClick={() => updOpt(o.id, { items: [...o.items, { key: uuidv7(), ingredientId: '', qty: '', sizeMode: 'fixed' }] })} className="self-start border-0 bg-transparent text-sm font-semibold text-accent-foreground">
                       {t.products.addIngredient}
                     </button>
+                  )}
+                    </>
                   )}
                   {o.price ? <span className="text-xs text-muted-foreground">+{money(o.price)}</span> : null}
                 </div>

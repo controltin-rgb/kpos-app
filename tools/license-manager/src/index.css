@@ -1,0 +1,4 @@
+/* Same design tokens as the shop app (colours, fonts, dark mode); Tailwind scans the shared components too. */
+@import '../../../src/renderer/styles/globals.css';
+@source '../../../src/renderer/components';
+@source './';

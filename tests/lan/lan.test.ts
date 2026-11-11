@@ -24,7 +24,8 @@ async function host(opts: { clients?: number } = {}) {
   })
   stops.push(() => t.app.lan.stop())
   await t.setup()
-  if (opts.clients !== 0) await installLicense(t, { features: { maxClients: opts.clients ?? 2 } })
+  // maxClients 0 = this machine cannot be a Host (D51), so "no free slot" is tested with a 1-client license that is already used up
+  await installLicense(t, { features: { maxClients: opts.clients === 0 ? 1 : (opts.clients ?? 2) } })
   await t.call(1, 'lan.setMode', { mode: 'host' })
   const address = `127.0.0.1:${t.app.lan.listeningPort}`
   return { t, address, hostPrints }
@@ -83,10 +84,20 @@ describe('pairing (D34)', () => {
     await expect(pairWithHost(address, code, { name: 'x', hardwareId: 'HW-X', kind: 'pos' })).rejects.toMatchObject({ code: 'LAN_PAIRING_INVALID' })
   })
 
-  it('respects the number of Clients in the license (trial: none)', async () => {
-    const { t, address } = await host({ clients: 0 })
-    const { code } = await t.call(1, 'lan.startPairing')
-    await expect(pairWithHost(address, code, { name: 'x', hardwareId: 'HW-X', kind: 'pos' })).rejects.toMatchObject({ code: 'LAN_CLIENT_LIMIT' })
+  it('respects the number of Clients in the license', async () => {
+    const { t, address } = await host({ clients: 0 }) // a 1-client license
+    const first = await t.call(1, 'lan.startPairing')
+    await pairWithHost(address, first.code, { name: 'one', hardwareId: 'HW-ONE', kind: 'pos' })
+    const second = await t.call(1, 'lan.startPairing')
+    await expect(pairWithHost(address, second.code, { name: 'two', hardwareId: 'HW-TWO', kind: 'pos' })).rejects.toMatchObject({ code: 'LAN_CLIENT_LIMIT' })
+  })
+
+  it('a machine whose license has no Host (maxClients 0) cannot become a Host (D51)', async () => {
+    const t = createTestApp({ lan: { certDir: tmpDir('kposs-cert-'), bindHost: '127.0.0.1', listenPort: 0 }, device: { id: '00000000-0000-7000-8000-0000000000a2', name: 'SOLO', hardwareId: 'solo-hw', role: 'standalone' } })
+    stops.push(() => t.app.lan.stop())
+    await t.setup()
+    await installLicense(t, { features: { maxClients: 0 } })
+    await t.fails('FEATURE_NOT_LICENSED', 1, 'lan.setMode', { mode: 'host' })
   })
 
   it('refuses a Host whose certificate differs from the pinned one', async () => {

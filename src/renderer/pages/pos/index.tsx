@@ -12,7 +12,7 @@ import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useAppEvent } from '@renderer/lib/events'
 import { money, vatPct } from '@renderer/lib/format'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { cn } from '@renderer/lib/utils'
 import type { PointsRulesDto, QuoteDto } from '@shared/api-promo'
 import { CashDialog, CashMoveDialog, OpenShiftDialog, PromptPayDialog, ResultDialog } from './dialogs'
@@ -53,6 +53,7 @@ const chipBtn = 'flex min-h-12 cursor-pointer items-center gap-2.5 rounded-3xl b
 /** docs/design/POS.dc.html (confirmed design). */
 export function PosPage() {
   const { user, can } = useSession()
+  const features = useFeatures()
   const navigate = useNavigate()
   const toast = useToast()
   const searchRef = useRef<HTMLInputElement>(null)
@@ -216,7 +217,7 @@ export function PosPage() {
   // ---- customer display ------------------------------------------------------
   const cfdState = pay ? 'awaiting_payment' : cart.length ? 'cart' : 'idle'
   useEffect(() => {
-    if (!can('pos:view')) return
+    if (!can('pos:view') || !features.cfd) return
     const h = setTimeout(() => {
       void call('pos.showOnCfd', {
         orderLabel: t.orderTypes[orderType],
@@ -231,7 +232,7 @@ export function PosPage() {
       }).catch(() => {})
     }, 120)
     return () => clearTimeout(h)
-  }, [cart, shown.discount, shown.vat, shown.total, orderType, pay, result, cfdState, vatRateBp, can])
+  }, [cart, shown.discount, shown.vat, shown.total, orderType, pay, result, cfdState, vatRateBp, can, features.cfd])
 
   // ---- payment ---------------------------------------------------------------
   async function openPromptPay() {
@@ -299,15 +300,18 @@ export function PosPage() {
         </div>
         <div className="flex-1" />
         <ConnectionChip compact />
+        {/* cash drawer feature off (D51): sell only — no shift chip, cash in/out or close-shift buttons */}
+        {features.drawerShift && (
         <span className={cn('inline-flex h-[38px] items-center gap-2 rounded-[19px] px-3.5 text-[13px] font-semibold', shift ? 'bg-accent text-accent-foreground' : 'bg-warning text-warning-foreground')}>
           {shift ? p.shiftOpen(shift.openedByName) : p.shiftClosed}
         </span>
-        {can('shift:update') && (
+        )}
+        {features.drawerShift && can('shift:update') && (
           <button type="button" disabled={!shift} onClick={() => setCashMove(true)} className="min-h-11 cursor-pointer rounded-[22px] border-0 bg-white px-4 text-sm font-semibold shadow-[0_1px_3px_rgba(40,30,60,0.15)] disabled:cursor-not-allowed disabled:opacity-50">
             {p.cashInOut}
           </button>
         )}
-        {can('shift:update') && (
+        {features.drawerShift && can('shift:update') && (
           <button type="button" onClick={() => navigate('/shift')} className="min-h-11 cursor-pointer rounded-[22px] border-0 bg-white px-4 text-sm font-semibold shadow-[0_1px_3px_rgba(40,30,60,0.15)]">
             {p.closeShift}
           </button>

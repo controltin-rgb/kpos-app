@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createAppContext } from '@main/app-context'
 import { formatTaxId, isValidThaiTaxId } from '@shared/tax-id'
-import { createTestApp } from '../helpers/app'
+import { createTestApp, TEST_TRIAL_FEATURES } from '../helpers/app'
 import { installLicense } from '../helpers/license'
 import { T0 } from '../helpers/fixtures'
 import { requestId, seedShop } from '../helpers/shop'
@@ -172,7 +172,7 @@ describe('export', () => {
   it('writes UTF-8 CSV with a BOM through the save dialog', async () => {
     const t = createTestApp()
     const saved: { name: string; content: string }[] = []
-    const app = createAppContext({ db: t.db, authSecret: 'x'.repeat(48), now: () => T0, saveFile: async (name, content) => (saved.push({ name, content: String(content) }), `/tmp/${name}`) })
+    const app = createAppContext({ db: t.db, authSecret: 'x'.repeat(48), now: () => T0, trialFeatures: TEST_TRIAL_FEATURES, saveFile: async (name, content) => (saved.push({ name, content: String(content) }), `/tmp/${name}`) })
     await t.setup()
     const shop = await seedShop(t)
     await t.call(1, 'shift.open', { openingFloatSatang: 0 })

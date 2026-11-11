@@ -10,7 +10,7 @@ import { Card, Chip, Field, GradientButton, OutlineButton, PageHeader, SelectInp
 import { t } from '@renderer/i18n'
 import { call, errorMessage } from '@renderer/lib/api'
 import { useNow } from '@renderer/lib/events'
-import { useSession } from '@renderer/lib/session'
+import { useFeatures, useSession } from '@renderer/lib/session'
 import { LicenseSection } from './license'
 import { LanSection } from './lan'
 
@@ -65,6 +65,7 @@ const DRAFT_KEYS: (keyof Draft)[] = [
 /** docs/design/Settings.dc.html (draft) — sections available in phase 2. */
 export function SettingsPage() {
   const { can, system, refresh } = useSession()
+  const features = useFeatures()
   const toast = useToast()
   const [params] = useSearchParams()
   const [tab, setTab] = useState<Tab>(() => {
@@ -157,7 +158,7 @@ export function SettingsPage() {
       />
       {!editable && <Chip bg="#FFF4D6" fg="#7A5200" className="self-start">{st.readOnly}</Chip>}
       <div className="max-w-3xl">
-        <Segmented label={st.title} value={tab} onChange={setTab} options={(Object.keys(st.tabs) as Tab[]).map((k) => ({ value: k, label: st.tabs[k] }))} />
+        <Segmented label={st.title} value={tab} onChange={setTab} options={(Object.keys(st.tabs) as Tab[]).filter((k) => k !== 'stock' || features.inventory).map((k) => ({ value: k, label: st.tabs[k] }))} />
       </div>
 
       {tab === 'tax' && (
@@ -258,7 +259,7 @@ export function SettingsPage() {
           <span className="text-xs text-muted-foreground">{st.printerNote}</span>
         </Card>
       )}
-      {tab === 'printer' && (
+      {tab === 'printer' && features.kds && (
         <Card className="flex max-w-3xl flex-col gap-3">
           <h2 className="m-0 text-lg font-bold">{t.kdsSetting.title}</h2>
           <div className="flex min-h-12 items-center justify-between gap-3">
@@ -271,7 +272,7 @@ export function SettingsPage() {
         </Card>
       )}
 
-      {tab === 'stock' && (
+      {tab === 'stock' && features.inventory && (
         <Card className="flex max-w-3xl flex-col gap-3">
           <h2 className="m-0 text-lg font-bold">{st.stockTitle}</h2>
           <div className="flex min-h-12 items-center justify-between gap-3">
@@ -291,7 +292,7 @@ export function SettingsPage() {
           <LicenseSection />
         </Card>
       )}
-      {tab === 'device' && system?.deviceRole !== 'client' && (
+      {tab === 'device' && system?.deviceRole !== 'client' && features.autoUpdate && (
         <Card className="flex max-w-3xl flex-col gap-3">
           <h2 className="m-0 text-lg font-bold">{t.update.feedTitle}</h2>
           <Field label={t.update.feedUrl} hint={t.update.feedHint} error={feedOk ? undefined : t.update.feedInvalid}>
